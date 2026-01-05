@@ -25,3 +25,16 @@ class Room(Base):
 
     # 관계 설정 (방의 주인)
     host = relationship("User", back_populates="rooms")
+    participants = relationship("RoomParticipant", back_populates="room")
+
+class RoomParticipant(Base):
+    __tablename__ = "room_participants"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    room_id = Column(Integer, ForeignKey("rooms.id"))
+    joined_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    #관계 설정
+    user = relationship("User")
+    room = relationship("Room", back_populates="participants")

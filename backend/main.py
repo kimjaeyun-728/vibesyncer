@@ -36,3 +36,31 @@ def create_room(room: schemas.RoomCreate, db: Session = Depends(database.get_db)
 @app.get("/")
 def read_root():
     return {"message": "VibeSyncer Backend is connected to Supabase!"}
+
+@app.post("/rooms/{room_id}/join", response_model=schemas.ParticipantResponse)
+def join_room(room_id: int, join_data: schemas.RoomJoin, db: Session = Depends(database.get_db)):
+    #1. 방이 존재하는지 확인
+    db_room = db.query(models.Room).filter(models.Room.id == room_id).first()
+    if not db_room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    #2. 유저가 존재하는지 확인
+    db_user = db.query(models.User).filter(models.User.id == join_data.user_id).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    #3. 이미 입장해 있는지 확인 (중복 입장 방지)
+    existing_participant = db.query(models.RoomParticipant).filter(
+        models.RoomParticipant.room_id == room_id,
+        models.RoomParticipant.user_id == join_data.user_id
+    ).first()
+
+    if existing_participant:
+        return existing_participant
+
+    # 4. 입장 기록 생성
+    db_participant = models.RoomParticipant(user_id=join_data.user_id, room_id=room_id)
+    db.add(db_participant)
+    db.commit()
+    db.refresh(db_participant)
+    return db_participant
