@@ -32,7 +32,7 @@ export const Secondary: Story = {
 
 export const Danger: Story = {
   args: {
-    variant: 'danger',
+    variant: 'tertiary',
     children: 'Delete Room',
   },
 };

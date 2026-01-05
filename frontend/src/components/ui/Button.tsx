@@ -1,22 +1,21 @@
-import { clsx } from "clsx";
-import type { ReactNode } from "react";
+import { clsx } from 'clsx';
+import type { ReactNode } from 'react';
 
-interface ButtonProps {
+interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   children: ReactNode;
-  variant?: "primary" | "secondary" | "danger";
-  onClick?: () => void;
+  variant: 'primary' | 'secondary' | 'tertiary';
 }
 
-const Button = ({ children, variant = "primary", onClick }: ButtonProps) => {
-  const baseStyle = "px-4 py-2 rounded-lg font-bold transition-colors";
+const Button = ({ children, variant = 'primary', ...props }: ButtonProps) => {
+  const baseStyle = 'w-full px-6 py-3 rounded-lg transition-colors';
   const variants = {
-    primary: "bg-green-500 hover:bg-green-600 text-white",
-    secondary: "bg-gray-700 hover:bg-gray-600 text-white",
-    danger: "bg-red-500 hover:bg-red-600 text-white",
+    primary: 'bg-indigo-500 hover:bg-indigo-600 text-white',
+    secondary: 'bg-gray-700 hover:bg-gray-600 text-white',
+    tertiary: 'bg-green-500 hover:bg-green-600 text-white',
   };
 
   return (
-    <button className={clsx(baseStyle, variants[variant])} onClick={onClick}>
+    <button className={clsx(baseStyle, variants[variant])} {...props}>
       {children}
     </button>
   );
