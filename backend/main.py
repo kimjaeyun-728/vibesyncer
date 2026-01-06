@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 models.Base.metadata.create_all(bind=database.engine)
 
 app = FastAPI()
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -112,7 +113,7 @@ SUPPORTED_PLATFORMS = {
 # 노래 큐(Queue) 관련 API
 
 # 1. 특정 방의 노래 목록 조회
-@app.get("/rooms/{room_id}", response_model=List[schemas.RoomResponse])
+@app.get("/rooms/{room_id}/queue_list", response_model=List[schemas.QueueResponse])
 def get_room_queue(room_id: str, db: Session = Depends(database.get_db)):
     return db.query(models.QueueItem).filter(models.QueueItem.room_id == room_id).all()
 
@@ -204,11 +205,18 @@ def get_room_chats(room_id: int, limit: int = 50, db: Session = Depends(database
     """
     특정 방의 최근 채팅 기록을 최대 50개까지 가져옵니다.
     """
-    chats = db.query(models.ChatMessage)\
-            .filter(models.ChatMessage.room_id == room_id)\
-            .order_by(models.ChatMessage.created_at.asc())\
-            .limit(limit)\
-            .all()
+    chats = db.query(
+        models.ChatMessage.id,
+        models.ChatMessage.room_id,
+        models.ChatMessage.user_id,
+        models.ChatMessage.message,
+        models.ChatMessage.created_at,
+        models.User.username  # 유저 테이블에서 이름을 가져옴
+        ).join(models.User, models.ChatMessage.user_id == models.User.id) \
+         .filter(models.ChatMessage.room_id == room_id) \
+         .order_by(models.ChatMessage.created_at.asc()) \
+         .limit(limit) \
+         .all()
     return chats
 
 # 노래 재생 상태 업데이트
