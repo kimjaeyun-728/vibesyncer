@@ -213,7 +213,13 @@ def get_room_chats(room_id: int, limit: int = 50, db: Session = Depends(database
 
 # 노래 재생 상태 업데이트
 @app.patch("/rooms/{room_id}/queue/{item_id}", response_model=schemas.QueueResponse)
-def update_queue_item(room_id: int, item_id: int, is_played: bool, request_user_id: int, db: Session = Depends(database.get_db)):
+def update_queue_item(
+        room_id: int,
+        item_id: int,
+        is_played: bool,
+        request_user_id: int,
+        db: Session = Depends(database.get_db)):
+
     # 1. 해당 방 정보 가져오기
     db_room = db.query(models.Room).filter(models.Room.id == room_id).first()
     if not db_room:
