@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Boolean
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from database import Base
@@ -38,3 +38,33 @@ class RoomParticipant(Base):
     #관계 설정
     user = relationship("User")
     room = relationship("Room", back_populates="participants")
+
+# 채팅 메시지(Chat) 테이블
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    room_id  = Column(Integer, ForeignKey("rooms.id"))
+    user_id = Column(Integer, ForeignKey("users.id"))
+    message = Column(String)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # 관계 설정
+    user = relationship("User")
+    room = relationship("Room")
+
+class QueueItem(Base):
+    __tablename__ = "queue_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    room_id = Column(Integer, ForeignKey("rooms.id"))
+    user_id = Column(Integer, ForeignKey("users.id"))
+    title = Column(String)
+    artist = Column(String)
+    music_url = Column(String)
+    platform = Column(String)
+    is_played = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    room = relationship("Room")
+    user = relationship("User")
