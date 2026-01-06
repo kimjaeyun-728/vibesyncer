@@ -5,12 +5,19 @@ from typing import List
 from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 from database import get_db
 from fastapi import Body
+from fastapi.middleware.cors import CORSMiddleware
 
 # 1. 서버가 켜질 때 Supabase에 테이블을 자동으로 만듭니다 (가장 중요!)
 models.Base.metadata.create_all(bind=database.engine)
 
 app = FastAPI()
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 class ConnectionManager:
     def __init__(self):
         #{room_id: [websocket1, websocket2, ...]} 구조
@@ -156,6 +163,10 @@ async def websocket_endpoint(websocket: WebSocket, room_id: int, user_id: int):
     db_gen = get_db()
     db = next(db_gen)
 
+    # 연결된 유저의 정보 미리 가져오기
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    username = user.username if user else f"Unknown({user_id})"
+
     try:
         while True:
             # 2. 클라이언트로부터 메시지 수신 (텍스트 형태)
@@ -175,7 +186,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: int, user_id: int):
             await manager.broadcast_to_room(room_id, {
                 "type": "chat",
                 "user_id": user_id,
-                "username": f"User{user_id}",
+                "username": username,
                 "message": data,
                 "created_at": new_chat.created_at.isoformat()
             })
