@@ -1,8 +1,8 @@
 import logging
 import random
 import string
-from typing import List
-
+from typing import List, Optional
+import re
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import database
 from app.models import models
 from app.schemas import schemas
+from app.utils import extract_video_metadata, detect_platform
 
 # [Fix] Add API Metadata
 app = FastAPI(
@@ -33,12 +34,61 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------
-# Utility Function
+# Utility Functions
 # ---------------------------------------------------------
 def generate_room_code(length=6):
     """Generate a random alphanumeric string of fixed length."""
     characters = string.ascii_uppercase + string.digits
     return ''.join(random.choice(characters) for i in range(length))
+
+
+# [Moved Up] Common logic to add music to DB (Used by both API and WebSocket)
+async def process_music_addition(
+        room_id: int,
+        user_id: int,
+        music_url: str,
+        db: Session,
+        thumbnail_url: Optional[str] = None,
+        title: str = "Unknown Title",
+        artist: str = "Unknown Artist"
+):
+    # 1. Detect Platform (Using utility function)
+    detected_platform = detect_platform(music_url)
+
+    if not detected_platform:
+        return None  # Return None if platform is not supported
+
+    # 2. Extract Real Metadata
+    # [Updated] Now supports Youtube, Soundcloud, and Spotify
+    TARGET_PLATFORMS = ["Youtube", "Soundcloud", "Spotify"]
+
+    if detected_platform in TARGET_PLATFORMS:
+        # Attempt extraction only if title is placeholder
+        if title == "Unknown Title" or title.startswith("Shared by"):
+            metadata = extract_video_metadata(music_url)
+            if metadata:
+                title = metadata.get("title", title)
+                artist = metadata.get("artist", artist)
+
+                if not thumbnail_url:
+                    thumbnail_url = metadata.get("thumbnail_url")
+
+    # 3. Save to DB
+    db_item = models.QueueItem(
+        room_id=room_id,
+        user_id=user_id,
+        title=title,
+        artist=artist,
+        music_url=music_url,
+        thumbnail_url=thumbnail_url,
+        platform=detected_platform,
+        is_played=False
+    )
+    db.add(db_item)
+    db.commit()
+    db.refresh(db_item)
+
+    return db_item
 
 
 # ---------------------------------------------------------
@@ -199,16 +249,7 @@ async def delete_room(room_code: str, request_user_id: int, db: Session = Depend
     return {"message": "Room deleted successfully"}
 
 
-# --- Existing APIs (Queue, Chat) ---
-# Note: Platform detection logic is simpler here as it is the base version.
-
-SUPPORTED_PLATFORMS = {
-    "youtube.com": "Youtube",
-    "youtu.be": "Youtube",
-    "soundcloud.com": "Soundcloud",
-    "spotify.com": "Spotify"
-}
-
+# --- Queue & Chat APIs ---
 
 @app.get("/rooms/{room_id}/queue_list", response_model=List[schemas.QueueResponse])
 def get_room_queue(room_id: int, db: Session = Depends(database.get_db)):
@@ -217,30 +258,22 @@ def get_room_queue(room_id: int, db: Session = Depends(database.get_db)):
 
 @app.post("/rooms/{room_id}/queue", response_model=schemas.QueueResponse)
 async def add_to_queue(room_id: int, item: schemas.QueueCreate, db: Session = Depends(database.get_db)):
-    detected_platform = "Unknown"
-    url_lower = item.music_url.lower()
-    for domain, name in SUPPORTED_PLATFORMS.items():
-        if domain in url_lower:
-            detected_platform = name
-            break
-
-    if detected_platform == "Unknown":
-        raise HTTPException(status_code=400, detail="Platform not supported.")
-
-    db_item = models.QueueItem(
+    # [Refactored] Use 'process_music_addition' to reuse logic
+    db_item = await process_music_addition(
         room_id=room_id,
         user_id=item.user_id,
-        title=item.title,
-        artist=item.artist,
         music_url=item.music_url,
-        thumbnail_url=item.thumbnail_url,
-        platform=detected_platform,
-        is_played=False
+        db=db,
+        thumbnail_url=item.thumbnail_url,  # Frontend might provide this
+        title=item.title,  # Frontend might provide this
+        artist=item.artist  # Frontend might provide this
     )
-    db.add(db_item)
-    db.commit()
-    db.refresh(db_item)
 
+    # If detection failed (process_music_addition returns None)
+    if not db_item:
+        raise HTTPException(status_code=400, detail="Platform not supported")
+
+    # Broadcast update to all users in the room
     await manager.broadcast_to_room(room_id, {
         "type": "queue_update",
         "user_id": item.user_id,
@@ -251,6 +284,7 @@ async def add_to_queue(room_id: int, item: schemas.QueueCreate, db: Session = De
     })
 
     return db_item
+    # [Fix] Removed unreachable 'db.add/commit' lines here
 
 
 @app.patch("/rooms/{room_id}/queue/{item_id}", response_model=schemas.QueueResponse)
@@ -291,9 +325,14 @@ async def websocket_endpoint(websocket: WebSocket, room_id: int, user_id: int):
     user = db.query(models.User).filter(models.User.id == user_id).first()
     username = user.username if user else f"Unknown({user_id})"
 
+    # [Fix] Restored URL detection Regex
+    url_pattern = re.compile(r'(https?://\S+)')
+
     try:
         while True:
             data = await websocket.receive_text()
+
+            # 1. Save Chat Message
             new_chat = models.ChatMessage(
                 room_id=room_id,
                 user_id=user_id,
@@ -303,6 +342,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: int, user_id: int):
             db.commit()
             db.refresh(new_chat)
 
+            # 2. Broadcast Chat Message
             await manager.broadcast_to_room(room_id, {
                 "type": "chat",
                 "user_id": user_id,
@@ -310,6 +350,37 @@ async def websocket_endpoint(websocket: WebSocket, room_id: int, user_id: int):
                 "message": data,
                 "created_at": new_chat.created_at.isoformat()
             })
+
+            # 3. [Fix] Restored URL Auto-Detection Logic
+            found_urls = url_pattern.findall(data)
+            for url in found_urls:
+                # Try to add to queue using shared logic
+                added_item = await process_music_addition(
+                    room_id=room_id,
+                    user_id=user_id,
+                    music_url=url,
+                    db=db,
+                    title=f"Shared by {username}",  # Temporary Title (Crawler will update this)
+                    artist="Unknown"
+                )
+
+                # If successfully added (Valid Platform)
+                if added_item:
+                    # Notify everyone that a song was auto-added
+                    await manager.broadcast_to_room(room_id, {
+                        "type": "queue_update",
+                        "user_id": user_id,
+                        "title": added_item.title,
+                        "artist": added_item.artist,
+                        "thumbnail_url": added_item.thumbnail_url,
+                        "music_url": added_item.music_url
+                    })
+
+                    # Optional: Send system message
+                    await manager.broadcast_to_room(room_id, {
+                        "type": "system",
+                        "message": f"🎵 '{added_item.title}' has been added to the queue!"
+                    })
 
     except WebSocketDisconnect:
         manager.disconnect(websocket, room_id)
