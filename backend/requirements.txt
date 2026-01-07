@@ -9,4 +9,4 @@ pydantic-settings
 requests
 beautifulsoup4
 yt-dlp
-google-generativeai
+google-genai

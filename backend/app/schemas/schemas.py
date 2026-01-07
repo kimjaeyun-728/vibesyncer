@@ -30,6 +30,8 @@ class RoomResponse(RoomBase):
     id: int
     room_code: str = Field(..., description="Unique 6-character code for invitation")
     host_id: int
+
+    host_nickname: str = Field(..., description="Nickname of the host")
     created_at: datetime
     class Config:
         from_attributes = True

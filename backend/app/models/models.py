@@ -32,6 +32,10 @@ class Room(Base):
     host = relationship("User", back_populates="rooms")
     participants = relationship("RoomParticipant", back_populates="room")
 
+    @property
+    def host_nickname(self):
+        return self.host.username if self.host else "Unknown"
+
 
 # Room Participant Table
 class RoomParticipant(Base):
