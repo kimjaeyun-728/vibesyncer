@@ -2,9 +2,9 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 from typing import Optional, List
 
-# --- 유저(User) ---
+# --- User Schemas ---
 class UserBase(BaseModel):
-    username: str = Field(..., description="사용자 이름", example="다낭개발자")
+    username: str = Field(..., description="Username", example="DanangDeveloper")
 
 class UserCreate(UserBase):
     pass
@@ -15,12 +15,12 @@ class UserResponse(UserBase):
     class Config:
         from_attributes = True
 
-# --- 방(Room) ---
+# --- Room Schemas ---
 class RoomBase(BaseModel):
-    name: str = Field(..., description="방 제목", example="VibeSyncer 테스트방")
+    name: str = Field(..., description="Title of the room", example="VibeSyncer Test Room")
 
 class RoomCreate(RoomBase):
-    host_id: int = Field(..., description="호스트 유저 ID")
+    host_id: int = Field(..., description="ID of the host user")
 
 class RoomResponse(RoomBase):
     id: int
@@ -29,12 +29,12 @@ class RoomResponse(RoomBase):
     class Config:
         from_attributes = True
 
-# --- 노래 큐(QueueItem) ---
+# --- Queue Item Schemas ---
 class QueueCreate(BaseModel):
-    title: str = Field(..., description="노래 제목", example="Shopper")
-    artist: str = Field(..., description="가수", example="IU")
-    music_url: str = Field(..., description="음악 URL")
-    user_id: int = Field(..., description="추가한 유저 ID")
+    title: str = Field(..., description="Song title", example="Shopper")
+    artist: str = Field(..., description="Artist name", example="IU")
+    music_url: str = Field(..., description="URL of the music")
+    user_id: int = Field(..., description="ID of the user who added the song")
 
 class QueueResponse(QueueCreate):
     id: int
@@ -45,18 +45,18 @@ class QueueResponse(QueueCreate):
     class Config:
         from_attributes = True
 
-# --- 채팅(ChatMessage) ---
+# --- Chat Schemas ---
 class ChatResponse(BaseModel):
     id: int
     room_id: int
     user_id: int
-    username: str = Field(..., description="보낸 사람 이름") # 이름 연동을 위해 추가
-    message: str = Field(..., description="메시지 내용")
+    username: str = Field(..., description="Sender's username") # Added for frontend display
+    message: str = Field(..., description="Chat message content")
     created_at: datetime
     class Config:
         from_attributes = True
 
-# --- 입장(Participant) ---
+# --- Participant Schemas ---
 class RoomJoin(BaseModel):
     user_id: int
 

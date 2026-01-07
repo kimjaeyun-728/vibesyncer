@@ -1,9 +1,11 @@
 from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Boolean
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
-from database import Base
 
-# 1. 사용자(User) 테이블
+# 🔴 Import Path Fix: Import Base from the app package absolute path
+from app.database import Base
+
+# 1. User Table
 class User(Base):
     __tablename__ = "users"
 
@@ -11,22 +13,23 @@ class User(Base):
     username = Column(String, unique=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    # 관계 설정 (유저가 만든 방들)
+    # Relationship: Rooms created by the user
     rooms = relationship("Room", back_populates="host")
 
-# 2. 방(Room) 테이블
+# 2. Room Table
 class Room(Base):
     __tablename__ = "rooms"
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
-    host_id = Column(Integer, ForeignKey("users.id")) # 방장(User)의 ID
+    host_id = Column(Integer, ForeignKey("users.id")) # Host User ID
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    # 관계 설정 (방의 주인)
+    # Relationship: Host of the room and Participants
     host = relationship("User", back_populates="rooms")
     participants = relationship("RoomParticipant", back_populates="room")
 
+# Room Participant Table (Join Table)
 class RoomParticipant(Base):
     __tablename__ = "room_participants"
 
@@ -35,11 +38,11 @@ class RoomParticipant(Base):
     room_id = Column(Integer, ForeignKey("rooms.id"))
     joined_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    #관계 설정
+    # Relationships
     user = relationship("User")
     room = relationship("Room", back_populates="participants")
 
-# 채팅 메시지(Chat) 테이블
+# Chat Message Table
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
 
@@ -49,10 +52,11 @@ class ChatMessage(Base):
     message = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    # 관계 설정
+    # Relationships
     user = relationship("User")
     room = relationship("Room")
 
+# Music Queue Item Table
 class QueueItem(Base):
     __tablename__ = "queue_items"
 
@@ -66,5 +70,6 @@ class QueueItem(Base):
     is_played = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    # Relationships
     room = relationship("Room")
     user = relationship("User")
