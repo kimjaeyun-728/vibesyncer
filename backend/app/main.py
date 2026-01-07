@@ -1,16 +1,25 @@
 import logging
 import random
 import string
-from typing import List
-
+from typing import List, Optional
+import re
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 from fastapi.middleware.cors import CORSMiddleware
+from collections import defaultdict
+from datetime import datetime, timedelta
+from sqlalchemy import desc
 
 # Imports with 'app' directory structure
 from app import database
 from app.models import models
 from app.schemas import schemas
+from app.utils import extract_video_metadata, detect_platform
+from app.ai import get_ai_dj_response
+
+# [Fix] Configure Logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # [Fix] Add API Metadata
 app = FastAPI(
@@ -27,18 +36,104 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# [Fix] Configure Logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# ---------------------------------------------------------
+# Constants & Global Variables
+# ---------------------------------------------------------
+
+# [Fix 4] Rate Limiting Setup (Prevent Spam)
+user_last_dj_request = defaultdict(lambda: datetime.min)
+DJ_COOLDOWN_SECONDS = 10
+
+# [Fix 5] Dedicated Bot User ID
+BOT_USER_ID = 0
 
 
 # ---------------------------------------------------------
-# Utility Function
+# Startup Events
+# ---------------------------------------------------------
+@app.on_event("startup")
+def ensure_bot_user_exists():
+    """
+    Create a system bot user (ID=0) if it doesn't exist.
+    This prevents ForeignKeyViolation errors when saving AI messages.
+    """
+    db = database.SessionLocal()
+    try:
+        # Check if the bot user exists
+        bot_user = db.query(models.User).filter(models.User.id == BOT_USER_ID).first()
+
+        if not bot_user:
+            # Create if not exists (Force ID to 0)
+            logger.info(f"🤖 Creating System Bot User (ID: {BOT_USER_ID})...")
+            bot_user = models.User(id=BOT_USER_ID, username="🤖 VibeBot")
+            db.add(bot_user)
+            db.commit()
+            logger.info("✅ System Bot User created successfully!")
+        else:
+            logger.info(f"✅ System Bot User (ID: {BOT_USER_ID}) is ready.")
+
+    except Exception as e:
+        logger.error(f"⚠️ Warning: Failed to check/create bot user. Error: {e}")
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------
+# Utility Functions
 # ---------------------------------------------------------
 def generate_room_code(length=6):
     """Generate a random alphanumeric string of fixed length."""
     characters = string.ascii_uppercase + string.digits
     return ''.join(random.choice(characters) for i in range(length))
+
+
+# [Moved Up] Common logic to add music to DB (Used by both API and WebSocket)
+async def process_music_addition(
+        room_id: int,
+        user_id: int,
+        music_url: str,
+        db: Session,
+        thumbnail_url: Optional[str] = None,
+        title: str = "Unknown Title",
+        artist: str = "Unknown Artist"
+):
+    # 1. Detect Platform (Using utility function)
+    detected_platform = detect_platform(music_url)
+
+    if not detected_platform:
+        return None  # Return None if platform is not supported
+
+    # 2. Extract Real Metadata
+    # [Updated] Now supports Youtube, Soundcloud, and Spotify
+    TARGET_PLATFORMS = ["Youtube", "Soundcloud", "Spotify"]
+
+    if detected_platform in TARGET_PLATFORMS:
+        # Attempt extraction only if title is placeholder
+        if title == "Unknown Title" or title.startswith("Shared by"):
+            metadata = extract_video_metadata(music_url)
+            if metadata:
+                title = metadata.get("title", title)
+                artist = metadata.get("artist", artist)
+
+                if not thumbnail_url:
+                    thumbnail_url = metadata.get("thumbnail_url")
+
+    # 3. Save to DB
+    db_item = models.QueueItem(
+        room_id=room_id,
+        user_id=user_id,
+        title=title,
+        artist=artist,
+        music_url=music_url,
+        thumbnail_url=thumbnail_url,
+        platform=detected_platform,
+        is_played=False
+    )
+    db.add(db_item)
+    db.commit()
+    db.refresh(db_item)
+
+    return db_item
 
 
 # ---------------------------------------------------------
@@ -178,37 +273,36 @@ async def delete_room(room_code: str, request_user_id: int, db: Session = Depend
 
     room_id = db_room.id
 
-    # [Fix] Removed manual deletion logic.
-    # Database ON DELETE CASCADE will handle cleanup for queue, chats, and participants.
+    # [Updated Logic] Collect all participant (guest) IDs before deleting the room.
+    # (Since CASCADE will delete the relationship table when the room is deleted, we must backup User IDs first)
+    participant_rows = db.query(models.RoomParticipant.user_id) \
+        .filter(models.RoomParticipant.room_id == room_id) \
+        .all()
 
-    # Delete Room
+    # Convert tuple list [(1,), (3,)] -> list [1, 3]
+    guest_user_ids = [p[0] for p in participant_rows]
+
+    # 1. Delete Room (Chat, Queue, Participants are automatically deleted by CASCADE settings in DB)
     db.delete(db_room)
 
-    # Delete Host User
+    # 2. Delete Guest Users
+    if guest_user_ids:
+        db.query(models.User).filter(models.User.id.in_(guest_user_ids)).delete(synchronize_session=False)
+
+    # 3. Delete Host User
     host_user = db.query(models.User).filter(models.User.id == request_user_id).first()
     if host_user:
         db.delete(host_user)
 
     db.commit()
 
-    await manager.broadcast_to_room(room_id, {
-        "type": "room_deleted",
-        "message": "The host has dissolved the room."
-    })
+    # Log the action
+    logger.info(f"Room {room_code} dissolved. Host {request_user_id} and {len(guest_user_ids)} guests deleted.")
 
-    return {"message": "Room deleted successfully"}
+    return {"message": "Room and all participants deleted successfully"}
 
 
-# --- Existing APIs (Queue, Chat) ---
-# Note: Platform detection logic is simpler here as it is the base version.
-
-SUPPORTED_PLATFORMS = {
-    "youtube.com": "Youtube",
-    "youtu.be": "Youtube",
-    "soundcloud.com": "Soundcloud",
-    "spotify.com": "Spotify"
-}
-
+# --- Queue & Chat APIs ---
 
 @app.get("/rooms/{room_id}/queue_list", response_model=List[schemas.QueueResponse])
 def get_room_queue(room_id: int, db: Session = Depends(database.get_db)):
@@ -217,30 +311,22 @@ def get_room_queue(room_id: int, db: Session = Depends(database.get_db)):
 
 @app.post("/rooms/{room_id}/queue", response_model=schemas.QueueResponse)
 async def add_to_queue(room_id: int, item: schemas.QueueCreate, db: Session = Depends(database.get_db)):
-    detected_platform = "Unknown"
-    url_lower = item.music_url.lower()
-    for domain, name in SUPPORTED_PLATFORMS.items():
-        if domain in url_lower:
-            detected_platform = name
-            break
-
-    if detected_platform == "Unknown":
-        raise HTTPException(status_code=400, detail="Platform not supported.")
-
-    db_item = models.QueueItem(
+    # [Refactored] Use 'process_music_addition' to reuse logic
+    db_item = await process_music_addition(
         room_id=room_id,
         user_id=item.user_id,
-        title=item.title,
-        artist=item.artist,
         music_url=item.music_url,
+        db=db,
         thumbnail_url=item.thumbnail_url,
-        platform=detected_platform,
-        is_played=False
+        title=item.title,
+        artist=item.artist
     )
-    db.add(db_item)
-    db.commit()
-    db.refresh(db_item)
 
+    # If detection failed (process_music_addition returns None)
+    if not db_item:
+        raise HTTPException(status_code=400, detail="Platform not supported")
+
+    # Broadcast update to all users in the room
     await manager.broadcast_to_room(room_id, {
         "type": "queue_update",
         "user_id": item.user_id,
@@ -291,9 +377,20 @@ async def websocket_endpoint(websocket: WebSocket, room_id: int, user_id: int):
     user = db.query(models.User).filter(models.User.id == user_id).first()
     username = user.username if user else f"Unknown({user_id})"
 
+    # [New] Broadcast "Join Message" to the room immediately after connection
+    await manager.broadcast_to_room(room_id, {
+        "type": "system",
+        "message": f"{username} has joined the room."
+    })
+
+    # [Fix] Restored URL detection Regex
+    url_pattern = re.compile(r'(https?://\S+)')
+
     try:
         while True:
             data = await websocket.receive_text()
+
+            # 1. Save Chat Message
             new_chat = models.ChatMessage(
                 room_id=room_id,
                 user_id=user_id,
@@ -303,6 +400,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: int, user_id: int):
             db.commit()
             db.refresh(new_chat)
 
+            # 2. Broadcast Chat Message
             await manager.broadcast_to_room(room_id, {
                 "type": "chat",
                 "user_id": user_id,
@@ -310,6 +408,98 @@ async def websocket_endpoint(websocket: WebSocket, room_id: int, user_id: int):
                 "message": data,
                 "created_at": new_chat.created_at.isoformat()
             })
+
+            # -------------------------------------------------------
+            # [AI DJ Trigger Logic - UPGRADED]
+            # -------------------------------------------------------
+            if data.lower().startswith("!dj"):
+                # [Fix 4] Rate Limiting Check
+                user_key = f"{room_id}:{user_id}"
+                last_request = user_last_dj_request[user_key]
+
+                if datetime.now() - last_request < timedelta(seconds=DJ_COOLDOWN_SECONDS):
+                    # Cooldown warning
+                    await manager.broadcast_to_room(room_id, {
+                        "type": "system",
+                        "message": "⏳ Please wait before asking DJ again."
+                    })
+                    continue
+
+                    # Update timestamp
+                user_last_dj_request[user_key] = datetime.now()
+
+                query = data[3:].strip()
+                if query:
+                    # Notify "Thinking..."
+                    await manager.broadcast_to_room(room_id,
+                                                    {"type": "system", "message": "🤖 DJ VibeBot is thinking..."})
+
+                    # [Fix 6] Optimize chat history fetching
+                    # Get the latest 5 messages (Desc order), then reverse to Asc order
+                    recent_chats_db = db.query(models.ChatMessage) \
+                        .filter(models.ChatMessage.room_id == room_id) \
+                        .order_by(desc(models.ChatMessage.created_at)) \
+                        .limit(5) \
+                        .all()
+
+                    # Convert to context format (Past -> Present)
+                    chat_history = []
+                    for chat in recent_chats_db[::-1]:
+                        chat_history.append({"username": "User", "message": chat.message})
+
+                    # Call AI
+                    ai_reply = await get_ai_dj_response(query, username, chat_history)
+
+                    # Save AI Message using Bot ID
+                    ai_chat_entry = models.ChatMessage(
+                        room_id=room_id,
+                        user_id=BOT_USER_ID,  # [Fix 5] Use dedicated Bot ID
+                        message=f"[VibeBot] {ai_reply}"
+                    )
+
+                    db.add(ai_chat_entry)
+                    db.commit()
+
+                    # Broadcast Response
+                    await manager.broadcast_to_room(room_id, {
+                        "type": "chat",
+                        "user_id": BOT_USER_ID,
+                        "username": "🤖 VibeBot",
+                        "message": ai_reply,
+                        "created_at": datetime.now().isoformat()
+                    })
+
+            # 3. [Fix] URL Auto-Detection Logic
+            found_urls = url_pattern.findall(data)
+            for url in found_urls:
+                # Try to add to queue using shared logic
+                added_item = await process_music_addition(
+                    room_id=room_id,
+                    user_id=user_id,
+                    music_url=url,
+                    db=db,
+                    title=f"Shared by {username}",
+                    artist="Unknown"
+                )
+
+                # If successfully added (Valid Platform)
+                if added_item:
+                    # Notify everyone that a song was auto-added
+                    await manager.broadcast_to_room(room_id, {
+                        "type": "queue_update",
+                        "user_id": user_id,
+                        "title": added_item.title,
+                        "artist": added_item.artist,
+                        "thumbnail_url": added_item.thumbnail_url,
+                        "music_url": added_item.music_url,
+                        "platform": added_item.platform
+                    })
+
+                    # Optional: Send system message
+                    await manager.broadcast_to_room(room_id, {
+                        "type": "system",
+                        "message": f"🎵 '{added_item.title}' has been added to the queue!"
+                    })
 
     except WebSocketDisconnect:
         manager.disconnect(websocket, room_id)
