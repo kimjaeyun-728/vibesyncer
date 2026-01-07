@@ -1,10 +1,13 @@
+# app/schemas/schemas.py
+
 from pydantic import BaseModel, Field
 from datetime import datetime
 from typing import Optional, List
 
 # --- User Schemas ---
 class UserBase(BaseModel):
-    username: str = Field(..., description="Username", example="DanangDeveloper")
+    # Description updated for better API docs
+    username: str = Field(..., description="User's nickname", example="VibeMaster")
 
 class UserCreate(UserBase):
     pass
@@ -17,13 +20,15 @@ class UserResponse(UserBase):
 
 # --- Room Schemas ---
 class RoomBase(BaseModel):
-    name: str = Field(..., description="Title of the room", example="VibeSyncer Test Room")
+    name: str = Field(..., description="Title of the room", example="K-Pop Party")
 
 class RoomCreate(RoomBase):
-    host_id: int = Field(..., description="ID of the host user")
+    # Now we need host's nickname instead of ID to support "One-Step Creation"
+    host_nickname: str = Field(..., description="Nickname of the host creating the room")
 
 class RoomResponse(RoomBase):
     id: int
+    room_code: str = Field(..., description="Unique 6-character code for invitation")
     host_id: int
     created_at: datetime
     class Config:
@@ -34,6 +39,7 @@ class QueueCreate(BaseModel):
     title: str = Field(..., description="Song title", example="Shopper")
     artist: str = Field(..., description="Artist name", example="IU")
     music_url: str = Field(..., description="URL of the music")
+    thumbnail_url: Optional[str] = Field(None, description="URL of the album cover")
     user_id: int = Field(..., description="ID of the user who added the song")
 
 class QueueResponse(QueueCreate):
@@ -50,7 +56,7 @@ class ChatResponse(BaseModel):
     id: int
     room_id: int
     user_id: int
-    username: str = Field(..., description="Sender's username") # Added for frontend display
+    username: str = Field(..., description="Sender's username")
     message: str = Field(..., description="Chat message content")
     created_at: datetime
     class Config:
@@ -58,7 +64,9 @@ class ChatResponse(BaseModel):
 
 # --- Participant Schemas ---
 class RoomJoin(BaseModel):
-    user_id: int
+    # Join by Room Code + Nickname
+    room_code: str = Field(..., description="Room code to join")
+    nickname: str = Field(..., description="User's nickname")
 
 class ParticipantResponse(BaseModel):
     id: int

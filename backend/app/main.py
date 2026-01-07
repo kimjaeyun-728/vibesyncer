@@ -3,21 +3,16 @@ from sqlalchemy.orm import Session
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List
 import json
+import random
+import string
 from datetime import datetime
 
 # ---------------------------------------------------------
-# Refactored Imports (Project Structure Update)
+# Imports with 'app' directory structure
 # ---------------------------------------------------------
-# Imports modified to fit the 'app' directory structure
 from app import database
 from app.models import models
 from app.schemas import schemas
-
-# ---------------------------------------------------------
-# Mentor Feedback: Remove create_all
-# Use Alembic for migrations in production environments.
-# models.Base.metadata.create_all(bind=database.engine) <--- REMOVED
-# ---------------------------------------------------------
 
 app = FastAPI()
 
@@ -28,6 +23,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ---------------------------------------------------------
+# Utility Function: Generate Random Room Code
+# ---------------------------------------------------------
+def generate_room_code(length=6):
+    """Generate a random alphanumeric string of fixed length."""
+    characters = string.ascii_uppercase + string.digits
+    return ''.join(random.choice(characters) for i in range(length))
+
 
 # ---------------------------------------------------------
 # WebSocket Connection Manager
@@ -56,7 +61,9 @@ class ConnectionManager:
             for connection in self.active_connections[room_id]:
                 await connection.send_json(message)
 
+
 manager = ConnectionManager()
+
 
 # ---------------------------------------------------------
 # API Endpoints
@@ -64,58 +71,75 @@ manager = ConnectionManager()
 
 @app.get("/")
 def read_root():
-    return {"message": "VibeSyncer Backend is connected to Supabase!"}
+    return {"message": "VibeSyncer Backend is Running!"}
 
-# Test API: Create User
-@app.post("/users/", response_model=schemas.UserResponse)
-def create_user(user: schemas.UserCreate, db: Session = Depends(database.get_db)):
-    db_user = models.User(username=user.username)
-    db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
-    return db_user
 
-# Test API: Create Room
+# [Updated] Create Room with Nickname & Auto-generate Room Code
 @app.post("/rooms/", response_model=schemas.RoomResponse)
 def create_room(room: schemas.RoomCreate, db: Session = Depends(database.get_db)):
-    # Check if user exists
-    db_user = db.query(models.User).filter(models.User.id == room.host_id).first()
+    # 1. Handle Host User (Find existing or Create new)
+    # Since we don't have login, we treat nickname as identity for now.
+    db_user = db.query(models.User).filter(models.User.username == room.host_nickname).first()
     if not db_user:
-        raise HTTPException(status_code=404, detail="User not found")
+        db_user = models.User(username=room.host_nickname)
+        db.add(db_user)
+        db.commit()
+        db.refresh(db_user)
 
-    db_room = models.Room(name=room.name, host_id=room.host_id)
+    # 2. Generate Unique Room Code
+    # Retry logic in case of collision (very rare with 6 chars)
+    while True:
+        new_code = generate_room_code()
+        existing_code = db.query(models.Room).filter(models.Room.room_code == new_code).first()
+        if not existing_code:
+            break
+
+    # 3. Create Room
+    db_room = models.Room(
+        name=room.name,
+        host_id=db_user.id,
+        room_code=new_code
+    )
     db.add(db_room)
     db.commit()
     db.refresh(db_room)
+
     return db_room
 
-@app.post("/rooms/{room_id}/join", response_model=schemas.ParticipantResponse)
-def join_room(room_id: int, join_data: schemas.RoomJoin, db: Session = Depends(database.get_db)):
-    # 1. Check if room exists
-    db_room = db.query(models.Room).filter(models.Room.id == room_id).first()
+
+# [Updated] Join Room using Room Code
+@app.post("/rooms/join", response_model=schemas.ParticipantResponse)
+def join_room(join_data: schemas.RoomJoin, db: Session = Depends(database.get_db)):
+    # 1. Find Room by Room Code (Not ID)
+    db_room = db.query(models.Room).filter(models.Room.room_code == join_data.room_code).first()
     if not db_room:
-        raise HTTPException(status_code=404, detail="Room not found")
+        raise HTTPException(status_code=404, detail="Invalid Room Code")
 
-    # 2. Check if user exists
-    db_user = db.query(models.User).filter(models.User.id == join_data.user_id).first()
+    # 2. Handle User (Find existing or Create new by nickname)
+    db_user = db.query(models.User).filter(models.User.username == join_data.nickname).first()
     if not db_user:
-        raise HTTPException(status_code=404, detail="User not found")
+        db_user = models.User(username=join_data.nickname)
+        db.add(db_user)
+        db.commit()
+        db.refresh(db_user)
 
-    # 3. Check if already joined (Prevent duplicates)
+    # 3. Check if already joined
     existing_participant = db.query(models.RoomParticipant).filter(
-        models.RoomParticipant.room_id == room_id,
-        models.RoomParticipant.user_id == join_data.user_id
+        models.RoomParticipant.room_id == db_room.id,
+        models.RoomParticipant.user_id == db_user.id
     ).first()
 
     if existing_participant:
         return existing_participant
 
     # 4. Create participation record
-    db_participant = models.RoomParticipant(user_id=join_data.user_id, room_id=room_id)
+    db_participant = models.RoomParticipant(user_id=db_user.id, room_id=db_room.id)
     db.add(db_participant)
     db.commit()
     db.refresh(db_participant)
+
     return db_participant
+
 
 # Supported Platforms Definition
 SUPPORTED_PLATFORMS = {
@@ -125,16 +149,17 @@ SUPPORTED_PLATFORMS = {
     "spotify.com": "Spotify"
 }
 
+
 # ---------------------------------------------------------
 # Queue (Music) Related APIs
 # ---------------------------------------------------------
 
-# 1. Get song list for a specific room
 @app.get("/rooms/{room_id}/queue_list", response_model=List[schemas.QueueResponse])
 def get_room_queue(room_id: int, db: Session = Depends(database.get_db)):
     return db.query(models.QueueItem).filter(models.QueueItem.room_id == room_id).all()
 
-# 2. Add song to a specific room
+
+# [Updated] Add song with Thumbnail URL support
 @app.post("/rooms/{room_id}/queue", response_model=schemas.QueueResponse)
 async def add_to_queue(room_id: int, item: schemas.QueueCreate, db: Session = Depends(database.get_db)):
     # Detect platform via URL analysis
@@ -146,7 +171,7 @@ async def add_to_queue(room_id: int, item: schemas.QueueCreate, db: Session = De
             break
 
     if detected_platform == "Unknown":
-        raise HTTPException(status_code=400, detail="Platform not supported. (Youtube, Soundcloud, Spotify available)")
+        raise HTTPException(status_code=400, detail="Platform not supported.")
 
     db_item = models.QueueItem(
         room_id=room_id,
@@ -154,6 +179,7 @@ async def add_to_queue(room_id: int, item: schemas.QueueCreate, db: Session = De
         title=item.title,
         artist=item.artist,
         music_url=item.music_url,
+        thumbnail_url=item.thumbnail_url,  # [New] Save Album Cover
         platform=detected_platform,
         is_played=False
     )
@@ -161,17 +187,19 @@ async def add_to_queue(room_id: int, item: schemas.QueueCreate, db: Session = De
     db.commit()
     db.refresh(db_item)
 
-    # Broadcast "Who added what song" to everyone in the room
+    # Broadcast update
     await manager.broadcast_to_room(room_id, {
         "type": "queue_update",
         "user_id": item.user_id,
         "title": db_item.title,
+        "artist": db_item.artist,
+        "thumbnail_url": db_item.thumbnail_url,  # [New] Send cover to frontend
         "music_url": db_item.music_url
     })
 
     return db_item
 
-# Update song playback status (Host Only)
+
 @app.patch("/rooms/{room_id}/queue/{item_id}", response_model=schemas.QueueResponse)
 def update_queue_item(
         room_id: int,
@@ -179,17 +207,13 @@ def update_queue_item(
         is_played: bool,
         request_user_id: int,
         db: Session = Depends(database.get_db)):
-
-    # 1. Fetch room info
     db_room = db.query(models.Room).filter(models.Room.id == room_id).first()
     if not db_room:
         raise HTTPException(status_code=404, detail="Room not found.")
 
-    # 2. Authorization: Check if requester is the host
     if db_room.host_id != request_user_id:
         raise HTTPException(status_code=403, detail="Only the host can control the playback/queue.")
 
-    # 3. Find the song item
     db_item = db.query(models.QueueItem) \
         .filter(models.QueueItem.id == item_id, models.QueueItem.room_id == room_id) \
         .first()
@@ -203,29 +227,27 @@ def update_queue_item(
 
     return db_item
 
+
 # ---------------------------------------------------------
 # Chat & WebSocket Endpoints
 # ---------------------------------------------------------
 
 @app.websocket("/ws/{room_id}/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, room_id: int, user_id: int):
-    # 1. Accept connection and register to manager
     await manager.connect(websocket, room_id)
 
-    # Manually get DB session (Depends doesn't work well directly in WebSocket here)
     db_gen = database.get_db()
     db = next(db_gen)
 
-    # Pre-fetch connected user info
     user = db.query(models.User).filter(models.User.id == user_id).first()
     username = user.username if user else f"Unknown({user_id})"
 
     try:
         while True:
-            # 2. Receive message from client (Text format)
             data = await websocket.receive_text()
 
-            # 3. Save chat message to DB
+            # [TODO]: Add logic here to detect if 'data' is a URL and add to queue automatically
+
             new_chat = models.ChatMessage(
                 room_id=room_id,
                 user_id=user_id,
@@ -235,7 +257,6 @@ async def websocket_endpoint(websocket: WebSocket, room_id: int, user_id: int):
             db.commit()
             db.refresh(new_chat)
 
-            # 4. Broadcast to all users in the room (JSON format)
             await manager.broadcast_to_room(room_id, {
                 "type": "chat",
                 "user_id": user_id,
@@ -245,28 +266,23 @@ async def websocket_endpoint(websocket: WebSocket, room_id: int, user_id: int):
             })
 
     except WebSocketDisconnect:
-        # 5. Remove from manager on disconnect
         manager.disconnect(websocket, room_id)
     finally:
-        # Close DB session
         db_gen.close()
 
-# Get chat history for a specific room
+
 @app.get("/rooms/{room_id}/chats", response_model=List[schemas.ChatResponse])
 def get_room_chats(room_id: int, limit: int = 50, db: Session = Depends(database.get_db)):
-    """
-    Retrieve recent chat history for a specific room (up to limit).
-    """
     chats = db.query(
         models.ChatMessage.id,
         models.ChatMessage.room_id,
         models.ChatMessage.user_id,
         models.ChatMessage.message,
         models.ChatMessage.created_at,
-        models.User.username  # Fetch username from User table
-        ).join(models.User, models.ChatMessage.user_id == models.User.id) \
-         .filter(models.ChatMessage.room_id == room_id) \
-         .order_by(models.ChatMessage.created_at.asc()) \
-         .limit(limit) \
-         .all()
+        models.User.username
+    ).join(models.User, models.ChatMessage.user_id == models.User.id) \
+        .filter(models.ChatMessage.room_id == room_id) \
+        .order_by(models.ChatMessage.created_at.asc()) \
+        .limit(limit) \
+        .all()
     return chats
