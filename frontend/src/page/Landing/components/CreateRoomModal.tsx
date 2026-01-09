@@ -25,7 +25,7 @@ const CreateRoomModal = ({ open, onOpenChange }: CreateRoomModalProps) => {
       return;
     }
     const roomId = Math.random().toString(36).substring(2, 9);
-    const path = generatePath(ROUTE_PATH.ROOM, { id: roomId });
+    const path = generatePath(ROUTE_PATH.MUSIC_ROOM, { id: roomId });
     const search = createSearchParams({ roomName, nickName }).toString();
     navigate({
       pathname: path,

@@ -10,7 +10,7 @@ const Button = ({ children, variant = 'primary', ...props }: ButtonProps) => {
   const baseStyle = 'w-full px-6 py-3 rounded-lg transition-colors';
   const variants = {
     primary: 'bg-indigo-500 hover:bg-indigo-600 text-white',
-    secondary: 'bg-gray-700 hover:bg-gray-600 text-white',
+    secondary: 'bg-gray-600 hover:bg-gray-700 text-white',
     tertiary: 'bg-green-500 hover:bg-green-600 text-white',
   };
 
