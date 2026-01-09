@@ -20,7 +20,7 @@ const JoinRoomModal = ({ open, onOpenChange }: JoinRoomModalProps) => {
       alert('enter a room code!');
       return;
     }
-    navigate(generatePath(ROUTE_PATH.ROOM, { id: roomCode }));
+    navigate(generatePath(ROUTE_PATH.MUSIC_ROOM, { id: roomCode }));
     onOpenChange(false);
   };
 
