@@ -74,6 +74,19 @@ class ParticipantResponse(BaseModel):
     id: int
     user_id: int
     room_id: int
+
+    room_name: str = Field(..., description="Name of the joined room")
+    room_code: str = Field(..., description="Code of the joined room")
+    host_nickname: str = Field(..., description="Nickname of the room host")
+    nickname: str = Field(..., description="Nickname of the joining user")
+
     joined_at: datetime
+    class Config:
+        from_attributes = True
+
+class RoomHostResponse(BaseModel):
+    room_code: str = Field(..., description="Room code queried")
+    host_nickname: str = Field(..., description="Nickname of the host")
+
     class Config:
         from_attributes = True
