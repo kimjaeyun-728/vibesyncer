@@ -1,6 +1,9 @@
+# [backend/app/main.py] - CONFLICT RESOLUTION FINAL CODE
+
 import logging
 import random
 import string
+import json
 from typing import List, Optional
 import re
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect
@@ -9,7 +12,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from collections import defaultdict
 from datetime import datetime, timedelta
 from sqlalchemy import desc
-import json
 
 # Imports with 'app' directory structure
 from app import database
@@ -18,11 +20,11 @@ from app.schemas import schemas
 from app.utils import extract_video_metadata, detect_platform
 from app.ai import get_ai_dj_response
 
-# [Fix] Configure Logging
+# Configure Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# [Fix] Add API Metadata
+# Add API Metadata
 app = FastAPI(
     title="VibeSyncer API",
     description="Real-time collaborative music platform with WebSocket support",
@@ -41,11 +43,11 @@ app.add_middleware(
 # Constants & Global Variables
 # ---------------------------------------------------------
 
-# [Fix 4] Rate Limiting Setup (Prevent Spam)
+# Rate Limiting Setup (Prevent Spam)
 user_last_dj_request = defaultdict(lambda: datetime.min)
 DJ_COOLDOWN_SECONDS = 10
 
-# [Fix 5] Dedicated Bot User ID
+# Dedicated Bot User ID
 BOT_USER_ID = 0
 
 
@@ -88,7 +90,7 @@ def generate_room_code(length=6):
     return ''.join(random.choice(characters) for i in range(length))
 
 
-# [Moved Up] Common logic to add music to DB (Used by both API and WebSocket)
+# Common logic to add music to DB (Used by both API and WebSocket)
 async def process_music_addition(
         room_id: int,
         user_id: int,
@@ -105,7 +107,6 @@ async def process_music_addition(
         return None  # Return None if platform is not supported
 
     # 2. Extract Real Metadata
-    # [Updated] Now supports Youtube, Soundcloud, and Spotify
     TARGET_PLATFORMS = ["Youtube", "Soundcloud", "Spotify"]
 
     if detected_platform in TARGET_PLATFORMS:
@@ -142,7 +143,7 @@ async def process_music_addition(
 # ---------------------------------------------------------
 class ConnectionManager:
     def __init__(self):
-        # Structure: {room_id: [websocket1, websocket2, ...]}
+        # Manage active connections using room_id (int) for efficiency
         self.active_connections: dict[int, List[WebSocket]] = {}
 
     async def connect(self, websocket: WebSocket, room_id: int):
@@ -164,7 +165,7 @@ class ConnectionManager:
                 try:
                     await connection.send_json(message)
                 except Exception as e:
-                    # [Fix] Log the exception instead of silent pass
+                    # Log the exception instead of silent pass
                     logger.error(f"Failed to send message to connection: {e}")
                     pass
 
@@ -206,6 +207,7 @@ def create_room(room: schemas.RoomCreate, db: Session = Depends(database.get_db)
     db.commit()
     db.refresh(db_room)
 
+    # Return response schema explicitly to avoid lazy loading issues
     return schemas.RoomResponse(
         id=db_room.id,
         name=db_room.name,
@@ -215,6 +217,57 @@ def create_room(room: schemas.RoomCreate, db: Session = Depends(database.get_db)
         created_at=db_room.created_at
     )
 
+
+@app.get("/rooms/{room_code}/host", response_model=schemas.RoomHostResponse)
+def get_room_host(room_code: str, db: Session = Depends(database.get_db)):
+    """
+    Get the host's nickname for a specific room code.
+    Useful for displaying room details before joining.
+    """
+    db_room = db.query(models.Room).filter(models.Room.room_code == room_code).first()
+    if not db_room:
+        raise HTTPException(status_code=404, detail="Invalid Room Code")
+
+    return schemas.RoomHostResponse(
+        room_code=db_room.room_code,
+        host_nickname=db_room.host_nickname,
+        host_id=db_room.host_id,
+        room_name=db_room.name
+    )
+
+@app.get("/rooms/{room_code}", response_model=schemas.RoomDetailResponse)
+def get_room_details(room_code: str, db: Session = Depends(database.get_db)):
+    """
+    Get full room details including host info and list of participants.
+    """
+    db_room = db.query(models.Room).filter(models.Room.room_code == room_code).first()
+    if not db_room:
+        raise HTTPException(status_code=404, detail="Invalid Room Code")
+
+    participants_query = db.query(
+        models.Room.participants.user_id,
+        models.Room.participants.joined_at,
+        models.User.username.label("nickname"),
+    ).join(models.User, models.RoomParticipant.user_id == models.User.id)\
+     .filter(models.RoomParticipant.room_id == db_room.id).all()
+
+    participants_list = [
+        schemas.ParticipantInfo(
+            user_id=p.user_id,
+            nickname=p.nickname,
+            joined_at=p.joined_at
+        ) for p in participants_query
+    ]
+
+    return schemas.RoomDetailResponse(
+        room_id=db_room.id,
+        room_code=db_room.room_code,
+        name=db_room.name,
+        created_at=db_room.created_at,
+        host_id=db_room.host_id,
+        host_nickname=db_room.host_nickname,
+        participants=participants_list
+    )
 
 @app.post("/rooms/join", response_model=schemas.ParticipantResponse)
 def join_room(join_data: schemas.RoomJoin, db: Session = Depends(database.get_db)):
@@ -241,6 +294,7 @@ def join_room(join_data: schemas.RoomJoin, db: Session = Depends(database.get_db
     db.commit()
     db.refresh(db_participant)
 
+    # Return detailed response by mapping fields manually
     return schemas.ParticipantResponse(
         id=db_participant.id,
         user_id=db_participant.user_id,
@@ -290,8 +344,7 @@ async def delete_room(room_code: str, request_user_id: int, db: Session = Depend
 
     room_id = db_room.id
 
-    # [Updated Logic] Collect all participant (guest) IDs before deleting the room.
-    # (Since CASCADE will delete the relationship table when the room is deleted, we must backup User IDs first)
+    # Collect all participant (guest) IDs before deleting the room.
     participant_rows = db.query(models.RoomParticipant.user_id) \
         .filter(models.RoomParticipant.room_id == room_id) \
         .all()
@@ -299,7 +352,7 @@ async def delete_room(room_code: str, request_user_id: int, db: Session = Depend
     # Convert tuple list [(1,), (3,)] -> list [1, 3]
     guest_user_ids = [p[0] for p in participant_rows]
 
-    # 1. Delete Room (Chat, Queue, Participants are automatically deleted by CASCADE settings in DB)
+    # 1. Delete Room (Chat, Queue, Participants are automatically deleted by CASCADE)
     db.delete(db_room)
 
     # 2. Delete Guest Users
@@ -313,24 +366,36 @@ async def delete_room(room_code: str, request_user_id: int, db: Session = Depend
 
     db.commit()
 
-    # Log the action
     logger.info(f"Room {room_code} dissolved. Host {request_user_id} and {len(guest_user_ids)} guests deleted.")
 
     return {"message": "Room and all participants deleted successfully"}
 
 
-# --- Queue & Chat APIs ---
+# ---------------------------------------------------------
+# Queue & Chat APIs (Modified to use room_code)
+# ---------------------------------------------------------
 
-@app.get("/rooms/{room_id}/queue_list", response_model=List[schemas.QueueResponse])
-def get_room_queue(room_id: int, db: Session = Depends(database.get_db)):
-    return db.query(models.QueueItem).filter(models.QueueItem.room_id == room_id).all()
+@app.get("/rooms/{room_code}/queue_list", response_model=List[schemas.QueueResponse])
+def get_room_queue(room_code: str, db: Session = Depends(database.get_db)):
+    # 1. Find Room by Room Code
+    room = db.query(models.Room).filter(models.Room.room_code == room_code).first()
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    # 2. Query queue using the found room.id
+    return db.query(models.QueueItem).filter(models.QueueItem.room_id == room.id).all()
 
 
-@app.post("/rooms/{room_id}/queue", response_model=schemas.QueueResponse)
-async def add_to_queue(room_id: int, item: schemas.QueueCreate, db: Session = Depends(database.get_db)):
-    # [Refactored] Use 'process_music_addition' to reuse logic
+@app.post("/rooms/{room_code}/queue", response_model=schemas.QueueResponse)
+async def add_to_queue(room_code: str, item: schemas.QueueCreate, db: Session = Depends(database.get_db)):
+    # 1. Find Room by Room Code
+    room = db.query(models.Room).filter(models.Room.room_code == room_code).first()
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    # 2. Use found room.id (process_music_addition uses int id)
     db_item = await process_music_addition(
-        room_id=room_id,
+        room_id=room.id,
         user_id=item.user_id,
         music_url=item.music_url,
         db=db,
@@ -339,39 +404,42 @@ async def add_to_queue(room_id: int, item: schemas.QueueCreate, db: Session = De
         artist=item.artist
     )
 
-    # If detection failed (process_music_addition returns None)
     if not db_item:
         raise HTTPException(status_code=400, detail="Platform not supported")
 
-    # Broadcast update to all users in the room
-    await manager.broadcast_to_room(room_id, {
+    # 3. Broadcast (using room.id)
+    await manager.broadcast_to_room(room.id, {
         "type": "queue_update",
         "user_id": item.user_id,
         "title": db_item.title,
         "artist": db_item.artist,
         "thumbnail_url": db_item.thumbnail_url,
-        "music_url": db_item.music_url
+        "music_url": db_item.music_url,
+        "platform": db_item.platform
     })
 
     return db_item
 
 
-@app.patch("/rooms/{room_id}/queue/{item_id}", response_model=schemas.QueueResponse)
+@app.patch("/rooms/{room_code}/queue/{item_id}", response_model=schemas.QueueResponse)
 def update_queue_item(
-        room_id: int,
+        room_code: str,
         item_id: int,
         is_played: bool,
         request_user_id: int,
         db: Session = Depends(database.get_db)):
-    db_room = db.query(models.Room).filter(models.Room.id == room_id).first()
-    if not db_room:
-        raise HTTPException(status_code=404, detail="Room not found.")
+    # 1. Find Room by Room Code
+    room = db.query(models.Room).filter(models.Room.room_code == room_code).first()
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
 
-    if db_room.host_id != request_user_id:
+    # 2. Check Host Permissions
+    if room.host_id != request_user_id:
         raise HTTPException(status_code=403, detail="Only the host can control the playback/queue.")
 
+    # 3. Query item using the found room.id
     db_item = db.query(models.QueueItem) \
-        .filter(models.QueueItem.id == item_id, models.QueueItem.room_id == room_id) \
+        .filter(models.QueueItem.id == item_id, models.QueueItem.room_id == room.id) \
         .first()
 
     if not db_item:
@@ -384,148 +452,14 @@ def update_queue_item(
     return db_item
 
 
-@app.websocket("/ws/{room_id}/{user_id}")
-async def websocket_endpoint(websocket: WebSocket, room_id: int, user_id: int):
-    await manager.connect(websocket, room_id)
+@app.get("/rooms/{room_code}/chats", response_model=List[schemas.ChatResponse])
+def get_room_chats(room_code: str, limit: int = 50, db: Session = Depends(database.get_db)):
+    # 1. Find Room by Room Code
+    room = db.query(models.Room).filter(models.Room.room_code == room_code).first()
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
 
-    db_gen = database.get_db()
-    db = next(db_gen)
-
-    user = db.query(models.User).filter(models.User.id == user_id).first()
-    username = user.username if user else f"Unknown({user_id})"
-
-    # [New] Broadcast "Join Message" to the room immediately after connection
-    await manager.broadcast_to_room(room_id, {
-        "type": "system",
-        "message": f"{username} has joined the room."
-    })
-
-    # [Fix] Restored URL detection Regex
-    url_pattern = re.compile(r'(https?://\S+)')
-
-    try:
-        while True:
-            data = await websocket.receive_text()
-
-            # 1. Save Chat Message
-            new_chat = models.ChatMessage(
-                room_id=room_id,
-                user_id=user_id,
-                message=data
-            )
-            db.add(new_chat)
-            db.commit()
-            db.refresh(new_chat)
-
-            # 2. Broadcast Chat Message
-            await manager.broadcast_to_room(room_id, {
-                "type": "chat",
-                "user_id": user_id,
-                "username": username,
-                "message": data,
-                "created_at": new_chat.created_at.isoformat()
-            })
-
-            # -------------------------------------------------------
-            # [AI DJ Trigger Logic - UPGRADED]
-            # -------------------------------------------------------
-            if data.lower().startswith("!dj"):
-                # [Fix 4] Rate Limiting Check
-                user_key = f"{room_id}:{user_id}"
-                last_request = user_last_dj_request[user_key]
-
-                if datetime.now() - last_request < timedelta(seconds=DJ_COOLDOWN_SECONDS):
-                    # Cooldown warning
-                    await manager.broadcast_to_room(room_id, {
-                        "type": "system",
-                        "message": "⏳ Please wait before asking DJ again."
-                    })
-                    continue
-
-                    # Update timestamp
-                user_last_dj_request[user_key] = datetime.now()
-
-                query = data[3:].strip()
-                if query:
-                    # Notify "Thinking..."
-                    await manager.broadcast_to_room(room_id,
-                                                    {"type": "system", "message": "🤖 DJ VibeBot is thinking..."})
-
-                    # [Fix 6] Optimize chat history fetching
-                    # Get the latest 5 messages (Desc order), then reverse to Asc order
-                    recent_chats_db = db.query(models.ChatMessage) \
-                        .filter(models.ChatMessage.room_id == room_id) \
-                        .order_by(desc(models.ChatMessage.created_at)) \
-                        .limit(5) \
-                        .all()
-
-                    # Convert to context format (Past -> Present)
-                    chat_history = []
-                    for chat in recent_chats_db[::-1]:
-                        chat_history.append({"username": "User", "message": chat.message})
-
-                    # Call AI
-                    ai_reply = await get_ai_dj_response(query, username, chat_history)
-
-                    # Save AI Message using Bot ID
-                    ai_chat_entry = models.ChatMessage(
-                        room_id=room_id,
-                        user_id=BOT_USER_ID,  # [Fix 5] Use dedicated Bot ID
-                        message=f"[VibeBot] {ai_reply}"
-                    )
-
-                    db.add(ai_chat_entry)
-                    db.commit()
-
-                    # Broadcast Response
-                    await manager.broadcast_to_room(room_id, {
-                        "type": "chat",
-                        "user_id": BOT_USER_ID,
-                        "username": "🤖 VibeBot",
-                        "message": ai_reply,
-                        "created_at": datetime.now().isoformat()
-                    })
-
-            # 3. [Fix] URL Auto-Detection Logic
-            found_urls = url_pattern.findall(data)
-            for url in found_urls:
-                # Try to add to queue using shared logic
-                added_item = await process_music_addition(
-                    room_id=room_id,
-                    user_id=user_id,
-                    music_url=url,
-                    db=db,
-                    title=f"Shared by {username}",
-                    artist="Unknown"
-                )
-
-                # If successfully added (Valid Platform)
-                if added_item:
-                    # Notify everyone that a song was auto-added
-                    await manager.broadcast_to_room(room_id, {
-                        "type": "queue_update",
-                        "user_id": user_id,
-                        "title": added_item.title,
-                        "artist": added_item.artist,
-                        "thumbnail_url": added_item.thumbnail_url,
-                        "music_url": added_item.music_url,
-                        "platform": added_item.platform
-                    })
-
-                    # Optional: Send system message
-                    await manager.broadcast_to_room(room_id, {
-                        "type": "system",
-                        "message": f"🎵 '{added_item.title}' has been added to the queue!"
-                    })
-
-    except WebSocketDisconnect:
-        manager.disconnect(websocket, room_id)
-    finally:
-        db_gen.close()
-
-
-@app.get("/rooms/{room_id}/chats", response_model=List[schemas.ChatResponse])
-def get_room_chats(room_id: int, limit: int = 50, db: Session = Depends(database.get_db)):
+    # 2. Query chats using the found room.id
     chats = db.query(
         models.ChatMessage.id,
         models.ChatMessage.room_id,
@@ -534,27 +468,170 @@ def get_room_chats(room_id: int, limit: int = 50, db: Session = Depends(database
         models.ChatMessage.created_at,
         models.User.username
     ).join(models.User, models.ChatMessage.user_id == models.User.id) \
-        .filter(models.ChatMessage.room_id == room_id) \
+        .filter(models.ChatMessage.room_id == room.id) \
         .order_by(models.ChatMessage.created_at.asc()) \
         .limit(limit) \
         .all()
     return chats
 
-#[New] API to get host nickname using room code
-@app.get("/rooms/{room_code}/host", response_model=schemas.RoomHostResponse)
-def get_room_host(room_code: str, db: Session=Depends(database.get_db)):
-    """
-    Gest the host's nickname for a specific room code.
-    Useful for displaying room details before joinging.
-    """
-    # 1. Find the room by code
-    db_room = db.query(models.Room).filter(models.Room.room_code == room_code).first()
 
-    if not db_room:
-        raise HTTPException(status_code=404, detail="Invalid Room Code")
+# ---------------------------------------------------------
+# WebSocket Endpoint (Uses room_code now)
+# ---------------------------------------------------------
+@app.websocket("/ws/{room_code}/{user_id}")
+async def websocket_endpoint(websocket: WebSocket, room_code: str, user_id: int):
+    # 0. Validate Room Code & Get Room ID
+    # WebSocket does not support Dependency Injection nicely, so we use SessionLocal manually
+    db = database.SessionLocal()
+    try:
+        room = db.query(models.Room).filter(models.Room.room_code == room_code).first()
+        if not room:
+            # If room code invalid, close connection
+            await websocket.close(code=4000, reason="Invalid Room Code")
+            return
 
-    # 2. Return the host nickname (using the property in models.py)
-    return schemas.RoomHostResponse(
-        room_code=db_room.room_code,
-        host_nickname=db_room.host_nickname
-    )
+        # Extract ID for internal logic
+        room_id = room.id
+        host_id = room.host_id  # For permission check
+
+        # 1. Connect
+        await manager.connect(websocket, room_id)
+
+        # 2. Fetch User Info
+        user = db.query(models.User).filter(models.User.id == user_id).first()
+        username = user.username if user else f"Unknown({user_id})"
+
+        # 3. Broadcast Join
+        await manager.broadcast_to_room(room_id, {
+            "type": "system",
+            "message": f"{username} has joined the room."
+        })
+
+        url_pattern = re.compile(r'(https?://\S+)')
+
+        # Main Loop
+        try:
+            while True:
+                raw_data = await websocket.receive_text()
+
+                try:
+                    payload = json.loads(raw_data)
+                except json.JSONDecodeError:
+                    # If not JSON, treat as legacy text chat
+                    payload = {"type": "chat", "message": raw_data}
+
+                message_type = payload.get("type", "chat")
+
+                # --- [A] Sync Event Handling ---
+                if message_type == "sync":
+                    # [Security] Host Only
+                    if user_id != host_id:
+                        continue  # Ignore unauthorized requests
+
+                    payload["user_id"] = user_id
+                    payload["username"] = username
+                    await manager.broadcast_to_room(room_id, payload)
+                    continue
+
+                # --- [B] Chat & AI Logic ---
+                chat_message = payload.get("message", "")
+
+                # Skip empty messages
+                if not chat_message:
+                    continue
+
+                # Save Chat
+                new_chat = models.ChatMessage(
+                    room_id=room_id,
+                    user_id=user_id,
+                    message=chat_message
+                )
+                db.add(new_chat)
+                db.commit()
+                db.refresh(new_chat)
+
+                # Broadcast Chat
+                await manager.broadcast_to_room(room_id, {
+                    "type": "chat",
+                    "user_id": user_id,
+                    "username": username,
+                    "message": chat_message,
+                    "created_at": new_chat.created_at.isoformat()
+                })
+
+                # AI Trigger (!dj)
+                if chat_message.lower().startswith("!dj"):
+                    user_key = f"{room_id}:{user_id}"
+                    last_request = user_last_dj_request[user_key]
+
+                    if datetime.now() - last_request < timedelta(seconds=DJ_COOLDOWN_SECONDS):
+                        await manager.broadcast_to_room(room_id, {
+                            "type": "system",
+                            "message": "⏳ Please wait before asking DJ again."
+                        })
+                        continue
+
+                    user_last_dj_request[user_key] = datetime.now()
+                    query = chat_message[3:].strip()
+
+                    if query:
+                        await manager.broadcast_to_room(room_id,
+                                                        {"type": "system", "message": "🤖 DJ VibeBot is thinking..."})
+
+                        recent_chats_db = db.query(models.ChatMessage) \
+                            .filter(models.ChatMessage.room_id == room_id) \
+                            .order_by(desc(models.ChatMessage.created_at)) \
+                            .limit(5) \
+                            .all()
+
+                        chat_history = [{"username": "User", "message": c.message} for c in recent_chats_db[::-1]]
+
+                        ai_reply = await get_ai_dj_response(query, username, chat_history)
+
+                        ai_chat_entry = models.ChatMessage(
+                            room_id=room_id,
+                            user_id=BOT_USER_ID,
+                            message=f"[VibeBot] {ai_reply}"
+                        )
+                        db.add(ai_chat_entry)
+                        db.commit()
+
+                        await manager.broadcast_to_room(room_id, {
+                            "type": "chat",
+                            "user_id": BOT_USER_ID,
+                            "username": "🤖 VibeBot",
+                            "message": ai_reply,
+                            "created_at": datetime.now().isoformat()
+                        })
+
+                # URL Detection
+                found_urls = url_pattern.findall(chat_message)
+                for url in found_urls:
+                    added_item = await process_music_addition(
+                        room_id=room_id,
+                        user_id=user_id,
+                        music_url=url,
+                        db=db,
+                        title=f"Shared by {username}",
+                        artist="Unknown"
+                    )
+                    if added_item:
+                        await manager.broadcast_to_room(room_id, {
+                            "type": "queue_update",
+                            "user_id": user_id,
+                            "title": added_item.title,
+                            "artist": added_item.artist,
+                            "thumbnail_url": added_item.thumbnail_url,
+                            "music_url": added_item.music_url,
+                            "platform": added_item.platform
+                        })
+                        await manager.broadcast_to_room(room_id, {
+                            "type": "system",
+                            "message": f"🎵 '{added_item.title}' has been added to the queue!"
+                        })
+
+        except WebSocketDisconnect:
+            manager.disconnect(websocket, room_id)
+
+    finally:
+        db.close()
