@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from collections import defaultdict
 from datetime import datetime, timedelta
 from sqlalchemy import desc
+import json
 
 # Imports with 'app' directory structure
 from app import database
@@ -205,7 +206,14 @@ def create_room(room: schemas.RoomCreate, db: Session = Depends(database.get_db)
     db.commit()
     db.refresh(db_room)
 
-    return db_room
+    return schemas.RoomResponse(
+        id=db_room.id,
+        name=db_room.name,
+        room_code=db_room.room_code,
+        host_id=db_room.host_id,
+        host_nickname=db_user.username,
+        created_at=db_room.created_at
+    )
 
 
 @app.post("/rooms/join", response_model=schemas.ParticipantResponse)
@@ -233,7 +241,16 @@ def join_room(join_data: schemas.RoomJoin, db: Session = Depends(database.get_db
     db.commit()
     db.refresh(db_participant)
 
-    return db_participant
+    return schemas.ParticipantResponse(
+        id=db_participant.id,
+        user_id=db_participant.user_id,
+        room_id=db_participant.room_id,
+        joined_at=db_participant.joined_at,
+        room_name=db_room.name,
+        room_code=db_room.room_code,
+        host_nickname=db_room.host_nickname,
+        nickname=db_user.username
+    )
 
 
 @app.post("/rooms/leave")
@@ -522,3 +539,22 @@ def get_room_chats(room_id: int, limit: int = 50, db: Session = Depends(database
         .limit(limit) \
         .all()
     return chats
+
+#[New] API to get host nickname using room code
+@app.get("/rooms/{room_code}/host", response_model=schemas.RoomHostResponse)
+def get_room_host(room_code: str, db: Session=Depends(database.get_db)):
+    """
+    Gest the host's nickname for a specific room code.
+    Useful for displaying room details before joinging.
+    """
+    # 1. Find the room by code
+    db_room = db.query(models.Room).filter(models.Room.room_code == room_code).first()
+
+    if not db_room:
+        raise HTTPException(status_code=404, detail="Invalid Room Code")
+
+    # 2. Return the host nickname (using the property in models.py)
+    return schemas.RoomHostResponse(
+        room_code=db_room.room_code,
+        host_nickname=db_room.host_nickname
+    )
