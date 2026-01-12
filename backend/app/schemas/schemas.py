@@ -4,7 +4,6 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 from typing import Optional, List
 
-
 # --- User Schemas ---
 class UserBase(BaseModel):
     # Description updated for better API docs
@@ -120,6 +119,7 @@ class ParticipantInfo(BaseModel):
     class Config:
         from_attributes = True
 
+
 class RoomDetailsResponse(BaseModel):
     room_id: int
     room_code: str
@@ -129,7 +129,7 @@ class RoomDetailsResponse(BaseModel):
     host_id: int
     host_nickname: str
 
-    participants: List[ParticipantResponse] = []
+    participants: List[ParticipantInfo] = []
 
     class Config:
         from_attributes = True
