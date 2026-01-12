@@ -308,7 +308,14 @@ def join_room(join_data: schemas.RoomJoin, db: Session = Depends(database.get_db
 
 
 @app.post("/rooms/leave")
-async def leave_room(room_id: int, user_id: int, db: Session = Depends(database.get_db)):
+async def leave_room(room_code: str, user_id: int, db: Session = Depends(database.get_db)):
+
+    room = db.query(models.Room).filter(models.Room.room_code == room_code).first()
+    if not room:
+        raise HTTPException(status_code=404, detail="Invalid Room Code")
+    
+    room_id = room.id
+    
     participant = db.query(models.RoomParticipant).filter(
         models.RoomParticipant.room_id == room_id,
         models.RoomParticipant.user_id == user_id
