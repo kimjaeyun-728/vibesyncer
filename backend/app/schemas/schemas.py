@@ -4,7 +4,6 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 from typing import Optional, List
 
-
 # --- User Schemas ---
 class UserBase(BaseModel):
     # Description updated for better API docs
@@ -37,9 +36,10 @@ class RoomResponse(RoomBase):
     id: int
     room_code: str = Field(..., description="Unique 6-character code for invitation")
     host_id: int
-
     host_nickname: str = Field(..., description="Nickname of the host")
     created_at: datetime
+
+    token: str = Field(..., description="JWT Access Token for the host")
 
     class Config:
         from_attributes = True
@@ -108,6 +108,7 @@ class ParticipantResponse(BaseModel):
     host_nickname: str = Field(..., description="Nickname of the room host")
     nickname: str = Field(..., description="Nickname of the joining user")
 
+    token: str = Field(..., description="JWT Access Token for the particioant")
     class Config:
         from_attributes = True
 
@@ -120,6 +121,7 @@ class ParticipantInfo(BaseModel):
     class Config:
         from_attributes = True
 
+
 class RoomDetailsResponse(BaseModel):
     room_id: int
     room_code: str
@@ -129,7 +131,7 @@ class RoomDetailsResponse(BaseModel):
     host_id: int
     host_nickname: str
 
-    participants: List[ParticipantResponse] = []
+    participants: List[ParticipantInfo] = []
 
     class Config:
         from_attributes = True
