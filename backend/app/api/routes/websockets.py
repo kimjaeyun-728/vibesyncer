@@ -3,6 +3,7 @@
 import json
 import re
 import logging
+import jwt
 from datetime import datetime, timedelta
 from collections import defaultdict
 from typing import List
@@ -17,6 +18,7 @@ from app.models import models
 from app.ai import get_ai_dj_response
 from app.utils import process_music_addition
 from app.core.websocket_manager import manager
+from app.auth import SECRET_KEY, ALGORITHM
 
 # Initialize Router
 router = APIRouter()
@@ -36,8 +38,8 @@ BOT_USER_ID = 0
 # ---------------------------------------------------------
 # WebSocket Endpoint
 # ---------------------------------------------------------
-@router.websocket("/ws/{room_code}/{user_id}")
-async def websocket_endpoint(websocket: WebSocket, room_code: str, user_id: int):
+@router.websocket("/ws/{room_code}")
+async def websocket_endpoint(websocket: WebSocket, room_code: str):
     """
     Main WebSocket endpoint handling:
     1. Chat
@@ -46,8 +48,32 @@ async def websocket_endpoint(websocket: WebSocket, room_code: str, user_id: int)
     4. Music URL Sharing
     """
 
-    # 0. Validate Room Code & Get Room ID
+    # -----------------------------------------------------
+    # 🔒 1. JWT Authentication (Security Layer)
+    # -----------------------------------------------------
+    token = websocket.query_params.get("token")
+
+    if not token:
+        await websocket.close(code=4001, reason="Missing token")
+        return
+
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("user_id")
+
+        if user_id is None:
+            await websocket.close(code=4003, reason="Invalid Token")
+            return
+
+    except jwt.PyJWTError:
+        await websocket.close(code=4003, reason="Token Verification Failed")
+        return
+
+    # -----------------------------------------------------
+    # 🏠 2. Room Validation & DB Setup
+    # -----------------------------------------------------
     # WebSocket does not support Dependency Injection nicely, so we use SessionLocal manually
+
     db = database.SessionLocal()
 
     try:
@@ -55,21 +81,23 @@ async def websocket_endpoint(websocket: WebSocket, room_code: str, user_id: int)
         room = db.query(models.Room).filter(models.Room.room_code == room_code).first()
         if not room:
             # If room code invalid, close connection
-            await websocket.close(code=4000, reason="Invalid Room Code")
+            await websocket.close(code=4004, reason="Invalid Room Code")
             return
 
         # Extract ID for internal logic
         room_id = room.id
         host_id = room.host_id  # For permission check
 
-        # 1. Connect
+        # -----------------------------------------------------
+        # 🔗 3. Connection & Broadcast
+        # -----------------------------------------------------
         await manager.connect(websocket, room_id)
 
-        # 2. Fetch User Info
+        # 4. Fetch User Info
         user = db.query(models.User).filter(models.User.id == user_id).first()
         username = user.username if user else f"Unknown({user_id})"
 
-        # 3. Broadcast Join
+        # 5. Broadcast Join
         await manager.broadcast_to_room(room_id, {
             "type": "system",
             "message": f"{username} has joined the room."

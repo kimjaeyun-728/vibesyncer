@@ -135,6 +135,7 @@ def extract_video_metadata(url: str):
         'ignoreerrors': True,
         'no_playlist': True,
         'nocheckcertificate': True,
+        'source_address': '0.0.0.0',
         'http_headers': { 
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -191,6 +192,8 @@ def search_youtube_video(query: str):
         'no_warnings': True,
         'default_search': 'ytsearch1',
         'noplaylist': True,
+        'nocheckcertificate': True,
+        'source_address': '0.0.0.0',
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
