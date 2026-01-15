@@ -8,6 +8,8 @@ from app.models import models
 from app.schemas import schemas
 from app.utils import generate_room_code, process_music_addition
 from app.core.websocket_manager import manager  # Import the manager we moved earlier
+from app.auth import create_access_token
+from app.auth import verify_token
 
 # Create Router instance
 router = APIRouter()
@@ -46,13 +48,22 @@ def create_room(room: schemas.RoomCreate, db: Session = Depends(database.get_db)
     db.commit()
     db.refresh(db_room)
 
+    token_payload = {
+        "user_id": db_user.id,
+        "room_id": db_room.id,
+        "nickname": db_user.username,
+        "is_host": True
+    }
+    access_token = create_access_token(token_payload)
+
     return schemas.RoomResponse(
         id=db_room.id,
         name=db_room.name,
         room_code=db_room.room_code,
         host_id=db_room.host_id,
         host_nickname=db_user.username,
-        created_at=db_room.created_at
+        created_at=db_room.created_at,
+        token=access_token
     )
 
 
@@ -103,6 +114,14 @@ def join_room(join_data: schemas.RoomJoin, db: Session = Depends(database.get_db
     db.commit()
     db.refresh(db_participant)
 
+    token_payload = {
+        "user_id": db_user.id,
+        "room_id": db_room.id,
+        "nickname": db_user.username,
+        "is_host": False
+    }
+    access_token = create_access_token(token_payload)
+
     return schemas.ParticipantResponse(
         id=db_participant.id,
         user_id=db_participant.user_id,
@@ -111,19 +130,25 @@ def join_room(join_data: schemas.RoomJoin, db: Session = Depends(database.get_db
         room_name=db_room.name,
         room_code=db_room.room_code,
         host_nickname=db_room.host_nickname,
-        nickname=db_user.username
+        nickname=db_user.username,
+        token=access_token
     )
 
 
 @router.post("/leave")
-async def leave_room(room_code: str, user_id: int, db: Session = Depends(database.get_db)):
+async def leave_room(room_code: str, token_data: dict = Depends(verify_token), db: Session = Depends(database.get_db)):
     """
     Leave a room.
     URL: POST /rooms/leave
     """
+    user_id = token_data["user_id"]
+
     room = db.query(models.Room).filter(models.Room.room_code == room_code).first()
     if not room:
         raise HTTPException(status_code=404, detail="Invalid Room Code")
+
+    if token_data["room_id"] != room.id:
+        raise HTTPException(status_code=403, detail="You are not in this room")
 
     room_id = room.id
 
@@ -152,16 +177,18 @@ async def leave_room(room_code: str, user_id: int, db: Session = Depends(databas
 
 
 @router.delete("/{room_code}")
-async def delete_room(room_code: str, request_user_id: int, db: Session = Depends(database.get_db)):
+async def delete_room(room_code: str, token_data: dict = Depends(verify_token), db: Session = Depends(database.get_db)):
     """
     Delete a room (Host only).
     URL: DELETE /rooms/{room_code}
     """
+    user_id = token_data["user_id"]
+
     db_room = db.query(models.Room).filter(models.Room.room_code == room_code).first()
     if not db_room:
         raise HTTPException(status_code=404, detail="Room not found")
 
-    if db_room.host_id != request_user_id:
+    if db_room.host_id != user_id:
         raise HTTPException(status_code=403, detail="Only the host can dissolve the room")
 
     room_id = db_room.id
@@ -174,7 +201,7 @@ async def delete_room(room_code: str, request_user_id: int, db: Session = Depend
     if guest_user_ids:
         db.query(models.User).filter(models.User.id.in_(guest_user_ids)).delete(synchronize_session=False)
 
-    host_user = db.query(models.User).filter(models.User.id == request_user_id).first()
+    host_user = db.query(models.User).filter(models.User.id == user_id).first()
     if host_user:
         db.delete(host_user)
 
@@ -200,19 +227,28 @@ def get_room_queue(room_code: str, db: Session = Depends(database.get_db)):
 
 
 @router.post("/{room_code}/queue", response_model=schemas.QueueResponse)
-async def add_to_queue(room_code: str, item: schemas.QueueCreate, db: Session = Depends(database.get_db)):
+async def add_to_queue(room_code: str,
+                       item: schemas.QueueCreate,
+                       token_data: dict = Depends(verify_token),
+                       db: Session = Depends(database.get_db)):
     """
     Add a song to the queue.
     URL: POST /rooms/{room_code}/queue
     """
+
+    real_user_id = token_data["user_id"]
+
     room = db.query(models.Room).filter(models.Room.room_code == room_code).first()
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
+    if token_data["room_id"] != room.id:
+        raise HTTPException(status_code=403, detail="You are not in this room")
+
     # Use utility function to process music (extract metadata, save to DB)
     db_item = await process_music_addition(
         room_id=room.id,
-        user_id=item.user_id,
+        user_id=real_user_id,
         music_url=item.music_url,
         db=db,
         thumbnail_url=item.thumbnail_url,
@@ -226,7 +262,7 @@ async def add_to_queue(room_code: str, item: schemas.QueueCreate, db: Session = 
     # Broadcast update
     await manager.broadcast_to_room(room.id, {
         "type": "queue_update",
-        "user_id": item.user_id,
+        "user_id": real_user_id,
         "title": db_item.title,
         "artist": db_item.artist,
         "thumbnail_url": db_item.thumbnail_url,
@@ -242,17 +278,19 @@ def update_queue_item(
         room_code: str,
         item_id: int,
         is_played: bool,
-        request_user_id: int,
+        token_data: dict = Depends(verify_token),
         db: Session = Depends(database.get_db)):
     """
     Update queue item status (e.g., mark as played).
     URL: PATCH /rooms/{room_code}/queue/{item_id}
     """
+    user_id = token_data["user_id"]
+
     room = db.query(models.Room).filter(models.Room.room_code == room_code).first()
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
-    if room.host_id != request_user_id:
+    if room.host_id != user_id:
         raise HTTPException(status_code=403, detail="Only the host can control the playback/queue.")
 
     db_item = db.query(models.QueueItem) \
@@ -270,7 +308,10 @@ def update_queue_item(
 
 
 @router.get("/{room_code}/chats", response_model=List[schemas.ChatResponse])
-def get_room_chats(room_code: str, limit: int = 50, db: Session = Depends(database.get_db)):
+def get_room_chats(room_code: str,
+                   limit: int = 50,
+                   token_data: dict = Depends(verify_token),
+                   db: Session = Depends(database.get_db)):
     """
     Get chat history.
     URL: GET /rooms/{room_code}/chats
@@ -279,6 +320,8 @@ def get_room_chats(room_code: str, limit: int = 50, db: Session = Depends(databa
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
+    if token_data["room_id"] != room.id:
+        raise HTTPException(status_code=403, detail="Not authorized to view this chat")
     chats = db.query(
         models.ChatMessage.id,
         models.ChatMessage.room_id,

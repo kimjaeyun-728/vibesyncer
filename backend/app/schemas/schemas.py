@@ -36,9 +36,10 @@ class RoomResponse(RoomBase):
     id: int
     room_code: str = Field(..., description="Unique 6-character code for invitation")
     host_id: int
-
     host_nickname: str = Field(..., description="Nickname of the host")
     created_at: datetime
+
+    token: str = Field(..., description="JWT Access Token for the host")
 
     class Config:
         from_attributes = True
@@ -107,6 +108,7 @@ class ParticipantResponse(BaseModel):
     host_nickname: str = Field(..., description="Nickname of the room host")
     nickname: str = Field(..., description="Nickname of the joining user")
 
+    token: str = Field(..., description="JWT Access Token for the participant")
     class Config:
         from_attributes = True
 
