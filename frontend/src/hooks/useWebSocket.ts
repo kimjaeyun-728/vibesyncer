@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { logger } from '@/utils/logger';
 import type { ChatMessageResponse } from '@/schemas/chatSchema';
+import { useQueryClient } from '@tanstack/react-query';
 
 const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL;
 if (!WS_BASE_URL) {
@@ -21,8 +22,10 @@ type WebSocketConnectionStatus =
  * @returns WebSocket utilities including sendMessage function and connection status
  */
 const useWebSocket = (roomCode: string) => {
+  const queryClient = useQueryClient();
   const socketRef = useRef<WebSocket | null>(null);
   const [newMessage, setNewMessage] = useState<ChatMessageResponse>();
+  const [isAiLoading, setIsAiLoading] = useState(false);
   const [connectionStatus, setConnectionStatus] =
     useState<WebSocketConnectionStatus>('disconnected');
 
@@ -46,6 +49,8 @@ const useWebSocket = (roomCode: string) => {
       setConnectionStatus('connecting');
 
       const ws = new WebSocket(`${WS_BASE_URL}/${roomCode}?token=${token}`);
+
+      // VITE_WS_BASE_URL=wss://vibesyncer-backend.onrender.com/ws
       socketRef.current = ws;
 
       ws.onopen = () => {
@@ -62,7 +67,32 @@ const useWebSocket = (roomCode: string) => {
         if (!isComponentMounted || !isMountedRef.current) return;
         try {
           const data = JSON.parse(event.data);
-          setNewMessage(data);
+
+          if (
+            data.type === 'system' &&
+            data.message === '🤖 DJ VibeBot is thinking...'
+          ) {
+            setIsAiLoading(true);
+            return;
+          }
+
+          if (data.user_id === 0) {
+            setIsAiLoading(false);
+            setNewMessage(data);
+            return;
+          }
+
+          if (data.type === 'queue_update') {
+            queryClient.invalidateQueries({
+              queryKey: ['queueList', roomCode],
+            });
+            return;
+          }
+
+          if (data.type === 'sync' || data.type === 'chat') {
+            setNewMessage(data);
+            return;
+          }
         } catch (error) {
           logger.error('[WS] Failed to parse message:', error);
         }
@@ -118,7 +148,7 @@ const useWebSocket = (roomCode: string) => {
         socketRef.current.close();
       }
     };
-  }, [roomCode, token]);
+  }, [roomCode, token, queryClient]);
 
   const sendMessage = (data: object) => {
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
@@ -128,7 +158,12 @@ const useWebSocket = (roomCode: string) => {
     }
   };
 
-  return { sendMessage, newMessage, connectionStatus };
+  return {
+    sendMessage,
+    newMessage,
+    connectionStatus,
+    isAiLoading,
+  };
 };
 
 export default useWebSocket;

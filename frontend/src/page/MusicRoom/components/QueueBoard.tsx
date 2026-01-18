@@ -1,20 +1,40 @@
+import Error from '@/components/ui/Error';
+import Loading from '@/components/ui/Loading';
 import useQueueList from '@/hooks/queries/useQueueList';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
+import { Check } from 'lucide-react';
 
 interface QueueBoardProps {
-  roomCode: string;
+  queueList: ReturnType<typeof useQueueList>['data'];
+  isLoading: boolean;
+  isError: boolean;
 }
 
-const QueueBoard = ({ roomCode }: QueueBoardProps) => {
-  const { queueList, fetchQueueList } = useQueueList();
+const QueueBoard = ({ queueList, isLoading, isError }: QueueBoardProps) => {
+  const queueContainerRef = useRef<HTMLDivElement>(null);
+  const currentSongRef = useRef<HTMLDivElement>(null);
+  const previousQueueLengthRef = useRef(0);
+
   useEffect(() => {
-    fetchQueueList(roomCode);
-  }, [roomCode, fetchQueueList]);
+    const currentLength = queueList?.length || 0;
+    const hasNewSong = currentLength > previousQueueLengthRef.current;
+
+    if (hasNewSong && currentSongRef.current) {
+      currentSongRef.current.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
+      });
+    }
+
+    previousQueueLengthRef.current = currentLength;
+  }, [queueList?.length]);
+
+  if (isError) return <Error />;
 
   return (
-    <div className="flex w-80 flex-col gap-6">
-      <div className="flex flex-1 flex-col rounded-3xl border border-gray-200 bg-white p-6 shadow-lg transition-shadow hover:shadow-xl">
-        <div className="mb-6 flex items-center gap-3 border-b border-gray-100 pb-4">
+    <div className="flex flex-1 flex-col rounded-3xl border border-gray-200 bg-white shadow-lg transition-shadow hover:shadow-xl">
+      <div className="flex flex-1 flex-col overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-lg transition-shadow hover:shadow-xl">
+        <div className="flex items-center gap-3 border-b border-gray-100 p-6">
           <h2 className="text-sm uppercase tracking-wide text-gray-900">
             Queue
           </h2>
@@ -22,31 +42,63 @@ const QueueBoard = ({ roomCode }: QueueBoardProps) => {
             {queueList?.length || 0}
           </span>
         </div>
-        <div className="flex-1 space-y-2 overflow-y-auto">
-          {queueList &&
+
+        <div
+          ref={queueContainerRef}
+          className="scrollbar-hide flex-1 space-y-4 overflow-y-auto p-6"
+        >
+          {isLoading ? (
+            <div className="flex h-full w-full items-center justify-center">
+              <Loading />
+            </div>
+          ) : (
+            queueList &&
             queueList.length > 0 &&
-            queueList?.map((song, index) => (
-              <div
-                key={song.id}
-                className="group cursor-pointer rounded-2xl p-4 transition-all hover:bg-gray-50"
-              >
-                <div className="flex items-start gap-3">
-                  <span className="mt-0.5 w-6 font-mono text-xs text-gray-400">
-                    {String(index + 1).padStart(2, '0')}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm text-gray-900">
-                      {song.title}
-                    </p>
-                    <p className="mt-0.5 truncate text-xs text-gray-500">
-                      {song.artist}
-                    </p>
+            queueList?.map((song, index) => {
+              const isCurrentSong =
+                index === 0 ||
+                (index > 0 &&
+                  queueList[index - 1].is_played &&
+                  !song.is_played);
+
+              return (
+                <div
+                  key={song.id}
+                  ref={isCurrentSong ? currentSongRef : null}
+                  className={`group cursor-pointer rounded-2xl p-4 transition-all ${
+                    song.is_played
+                      ? 'bg-gray-100 opacity-60'
+                      : isCurrentSong
+                        ? 'bg-indigo-50 ring-2 ring-indigo-500'
+                        : 'hover:bg-gray-50'
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <span className="mt-0.5 w-6 font-mono text-xs text-gray-400">
+                      {String(index + 1).padStart(2, '0')}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p
+                        className={`truncate text-sm ${
+                          song.is_played ? 'text-gray-600' : 'text-gray-900'
+                        }`}
+                      >
+                        {song.title}
+                      </p>
+                      <p className="mt-0.5 truncate text-xs text-gray-500">
+                        {song.artist}
+                      </p>
+                    </div>
+                    {song.is_played && (
+                      <Check className="h-4 w-4 text-green-500" />
+                    )}
                   </div>
                 </div>
-              </div>
-            ))}
-          {queueList?.length === 0 && (
-            <div className="py-20 text-center">
+              );
+            })
+          )}
+          {!isLoading && queueList?.length === 0 && (
+            <div className="flex h-full w-full items-center justify-center">
               <p className="text-xs text-gray-400">Empty queue</p>
             </div>
           )}

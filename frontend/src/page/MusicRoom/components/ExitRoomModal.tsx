@@ -53,8 +53,20 @@ const ExitRoomModal = ({ open, onOpenChange }: ExitRoomModalProps) => {
                   Cancel
                 </Button>
               </Dialog.Close>
-              <Button variant="primary" type="submit" disabled={isPending}>
-                {isPending ? <Loading /> : 'Leave Room'}
+              <Button
+                variant="primary"
+                type="submit"
+                disabled={isPending}
+                className="relative"
+              >
+                {isPending && (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <Loading size={64} />
+                  </div>
+                )}
+                <span className={isPending ? 'opacity-0' : 'opacity-100'}>
+                  Leave Room
+                </span>
               </Button>
             </div>
           </form>

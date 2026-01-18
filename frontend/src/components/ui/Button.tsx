@@ -6,7 +6,12 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant: 'primary' | 'secondary' | 'tertiary';
 }
 
-const Button = ({ children, variant = 'primary', ...props }: ButtonProps) => {
+const Button = ({
+  children,
+  variant = 'primary',
+  className,
+  ...props
+}: ButtonProps) => {
   const baseStyle = 'w-full px-6 py-3 rounded-lg transition-colors';
   const variants = {
     primary: 'bg-indigo-500 hover:bg-indigo-600 text-white',
@@ -15,7 +20,10 @@ const Button = ({ children, variant = 'primary', ...props }: ButtonProps) => {
   };
 
   return (
-    <button className={clsx(baseStyle, variants[variant])} {...props}>
+    <button
+      className={clsx(baseStyle, variants[variant], className)}
+      {...props}
+    >
       {children}
     </button>
   );
