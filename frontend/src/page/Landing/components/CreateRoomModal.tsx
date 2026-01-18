@@ -103,8 +103,20 @@ const CreateRoomModal = ({ open, onOpenChange }: CreateRoomModalProps) => {
                 </Button>
               </Dialog.Close>
 
-              <Button variant="primary" type="submit" disabled={isPending}>
-                {isPending ? <Loading size={80} /> : 'Create Room'}
+              <Button
+                variant="primary"
+                type="submit"
+                disabled={isPending}
+                className="relative"
+              >
+                {isPending && (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <Loading size={64} />
+                  </div>
+                )}
+                <span className={isPending ? 'opacity-0' : 'opacity-100'}>
+                  Create Room
+                </span>
               </Button>
             </div>
           </form>

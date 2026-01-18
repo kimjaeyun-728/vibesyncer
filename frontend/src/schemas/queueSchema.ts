@@ -1,11 +1,18 @@
 import z from 'zod';
 
 export const QueueResponseSchema = z.object({
-  id: z.string(),
   title: z.string(),
   artist: z.string(),
-  addedBy: z.string(),
-  url: z.string().url(),
+  music_url: z.string(),
+  thumbnail_url: z.string().nullable(),
+  user_id: z.number(),
+  id: z.number(),
+  room_id: z.number(),
+  platform: z.string(),
+  is_played: z.boolean(),
+  created_at: z.string(),
 });
 
-export type QueuesArrayResponse = z.infer<typeof QueueResponseSchema>[];
+export const QueueArraySchema = z.array(QueueResponseSchema);
+export type QueueResponse = z.infer<typeof QueueResponseSchema>;
+export type QueueArrayResponse = z.infer<typeof QueueArraySchema>;

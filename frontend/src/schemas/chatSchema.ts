@@ -7,6 +7,7 @@ export const ChatMessageResponseSchema = z.object({
   username: z.string(),
   message: z.string(),
   created_at: z.string(),
+  type: z.string().optional(),
 });
 
 export type ChatMessageResponse = z.infer<typeof ChatMessageResponseSchema>;

@@ -1,7 +1,6 @@
 import Error from '@/components/ui/Error';
 import Loading from '@/components/ui/Loading';
 import useChatMessages from '@/hooks/queries/useChatMessages';
-import useWebSocket from '@/hooks/useWebSocket';
 import type { ChatMessageResponse } from '@/schemas/chatSchema';
 import type { UserData } from '@/types/user';
 import { getMessageId } from '@/utils/getMessageId';
@@ -13,23 +12,32 @@ import { toast } from 'react-toastify';
 interface ChatBoardProps {
   currentUser: UserData | null;
   roomCode: string;
+  sendMessage: (messageData: object) => void;
+  newMessage: ChatMessageResponse | undefined;
+  connectionStatus: 'connecting' | 'connected' | 'disconnected' | 'error';
+  isAiLoading: boolean;
 }
 
 const MAX_MESSAGE_LENGTH = 100;
 
-const ChatBoard = ({ currentUser, roomCode }: ChatBoardProps) => {
+const ChatBoard = ({
+  currentUser,
+  roomCode,
+  sendMessage,
+  newMessage,
+  connectionStatus,
+  isAiLoading,
+}: ChatBoardProps) => {
   const queryClient = useQueryClient();
   const userId = currentUser?.userId;
   const [newTextInput, setNewTextInput] = useState('');
 
   const { data: chatMessages, isLoading, isError } = useChatMessages(roomCode);
 
-  const { sendMessage, newMessage, connectionStatus } = useWebSocket(roomCode);
-
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (newMessage) {
+    if (newMessage && newMessage.type === 'chat') {
       queryClient.setQueryData(
         ['chatMessages', roomCode],
         (prevMap: Map<string, ChatMessageResponse> | undefined) => {
@@ -43,10 +51,12 @@ const ChatBoard = ({ currentUser, roomCode }: ChatBoardProps) => {
 
   useEffect(() => {
     if (chatContainerRef.current) {
-      chatContainerRef.current.scrollTop =
-        chatContainerRef.current.scrollHeight;
+      chatContainerRef.current.scrollTo({
+        top: chatContainerRef.current.scrollHeight,
+        behavior: 'smooth',
+      });
     }
-  }, [chatMessages]);
+  }, [chatMessages, isAiLoading]);
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
@@ -75,10 +85,7 @@ const ChatBoard = ({ currentUser, roomCode }: ChatBoardProps) => {
   if (isError) return <Error />;
 
   return (
-    <div
-      ref={chatContainerRef}
-      className="flex flex-1 flex-col rounded-3xl border border-gray-200 bg-white shadow-lg transition-shadow hover:shadow-xl"
-    >
+    <div className="flex flex-1 flex-col rounded-3xl border border-gray-200 bg-white shadow-lg transition-shadow hover:shadow-xl">
       <div className="border-b border-gray-100 p-6">
         <h2 className="text-sm uppercase tracking-wide text-gray-900">Chat</h2>
         {connectionStatus !== 'connected' && (
@@ -90,12 +97,27 @@ const ChatBoard = ({ currentUser, roomCode }: ChatBoardProps) => {
         )}
       </div>
 
-      <div className="scrollbar-hide flex-1 space-y-4 overflow-y-auto p-6">
+      <div
+        ref={chatContainerRef}
+        className="scrollbar-hide flex-1 space-y-4 overflow-y-auto p-6"
+      >
         {isLoading ? (
-          <Loading />
+          <div className="flex h-full w-full items-center justify-center">
+            <Loading />
+          </div>
         ) : (
           chatMessages &&
           Array.from(chatMessages.values()).map((msg) => {
+            if (msg.type === 'system') {
+              return (
+                <div key={getMessageId(msg)} className="flex justify-center">
+                  <div className="rounded-full bg-gray-200 px-4 py-2 text-xs text-gray-500">
+                    {msg.message}
+                  </div>
+                </div>
+              );
+            }
+
             const isMyMessage = msg.user_id === userId;
 
             return (
@@ -122,6 +144,17 @@ const ChatBoard = ({ currentUser, roomCode }: ChatBoardProps) => {
               </div>
             );
           })
+        )}
+
+        {isAiLoading && (
+          <div className="flex flex-col items-start justify-start">
+            <div className="flex items-center">
+              <span className="mr-[-24px] text-xs text-gray-400">
+                DJ VibeBot is thinking
+              </span>
+              <Loading size={80} />
+            </div>
+          </div>
         )}
       </div>
 
