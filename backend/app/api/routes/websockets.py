@@ -166,10 +166,10 @@ async def websocket_endpoint(websocket: WebSocket, room_code: str):
                 # AI Trigger (!dj)
                 if chat_message.lower().startswith("!dj"):
                     user_key = f"{room_id}:{user_id}"
-                    last_request = user_last_dj_request[user_key]
+                    last_request = user_last_dj_request.get(user_key)
 
                     # Cooldown Check
-                    if datetime.now() - last_request < timedelta(seconds=DJ_COOLDOWN_SECONDS):
+                    if last_request and datetime.now() - last_request < timedelta(seconds=DJ_COOLDOWN_SECONDS):
                         await manager.broadcast_to_room(room_id, {
                             "type": "system",
                             "message": "⏳ Please wait before asking DJ again."
