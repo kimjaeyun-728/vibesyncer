@@ -4,10 +4,8 @@ import useChatMessages from '@/hooks/queries/useChatMessages';
 import type { ChatMessageResponse } from '@/schemas/chatSchema';
 import type { UserData } from '@/types/user';
 import { getMessageId } from '@/utils/getMessageId';
-import { useQueryClient } from '@tanstack/react-query';
 import { Send } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
-import { toast } from 'react-toastify';
+import useChatBoard from '../hooks/useChatBoard';
 
 interface ChatBoardProps {
   currentUser: UserData | null;
@@ -18,8 +16,6 @@ interface ChatBoardProps {
   isAiLoading: boolean;
 }
 
-const MAX_MESSAGE_LENGTH = 100;
-
 const ChatBoard = ({
   currentUser,
   roomCode,
@@ -28,59 +24,20 @@ const ChatBoard = ({
   connectionStatus,
   isAiLoading,
 }: ChatBoardProps) => {
-  const queryClient = useQueryClient();
   const userId = currentUser?.userId;
-  const [newTextInput, setNewTextInput] = useState('');
-
   const { data: chatMessages, isLoading, isError } = useChatMessages(roomCode);
-
-  const chatContainerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (newMessage && newMessage.type === 'chat') {
-      queryClient.setQueryData(
-        ['chatMessages', roomCode],
-        (prevMap: Map<string, ChatMessageResponse> | undefined) => {
-          const updated = new Map(prevMap || []);
-          updated.set(getMessageId(newMessage), newMessage);
-          return updated;
-        },
-      );
-    }
-  }, [newMessage, roomCode, queryClient]);
-
-  useEffect(() => {
-    if (chatContainerRef.current) {
-      chatContainerRef.current.scrollTo({
-        top: chatContainerRef.current.scrollHeight,
-        behavior: 'smooth',
-      });
-    }
-  }, [chatMessages, isAiLoading]);
-
-  const handleSendMessage = (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmed = newTextInput.trim();
-    if (trimmed === '') return;
-
-    if (trimmed.length > MAX_MESSAGE_LENGTH) {
-      toast.error('Message too long');
-      return;
-    }
-
-    if (connectionStatus !== 'connected') {
-      toast.error('Not connected. Please wait...');
-      return;
-    }
-
-    const messageData = {
-      type: 'chat',
-      message: newTextInput,
-    };
-
-    sendMessage(messageData);
-    setNewTextInput('');
-  };
+  const {
+    chatContainerRef,
+    newTextInput,
+    handleSendMessage,
+    handleInputChange,
+  } = useChatBoard({
+    sendMessage,
+    newMessage,
+    roomCode,
+    connectionStatus,
+    isAiLoading,
+  });
 
   if (isError) return <Error />;
 
@@ -166,7 +123,7 @@ const ChatBoard = ({
           <input
             type="text"
             value={newTextInput}
-            onChange={(e) => setNewTextInput(e.target.value)}
+            onChange={handleInputChange}
             placeholder="Message..."
             className="flex-1 rounded-full border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-900 placeholder-gray-400 transition-all focus:border-gray-300 focus:outline-none"
           />
