@@ -333,10 +333,10 @@ def get_room_chats(room_code: str,
         models.User.username
     ).join(models.User, models.ChatMessage.user_id == models.User.id) \
         .filter(models.ChatMessage.room_id == room.id) \
-        .order_by(models.ChatMessage.created_at.asc()) \
+        .order_by(models.ChatMessage.created_at.desc()) \
         .limit(limit) \
         .all()
-    return chats
+    return chats[::-1]
 
 
 @router.get("/{room_code}", response_model=schemas.RoomDetailsResponse)
@@ -355,7 +355,9 @@ def get_room_details(room_code: str, db: Session = Depends(database.get_db)):
         models.RoomParticipant.joined_at,
         models.User.username.label("nickname")
     ).join(models.User, models.RoomParticipant.user_id == models.User.id) \
-        .filter(models.RoomParticipant.room_id == db_room.id).all()
+        .filter(models.RoomParticipant.room_id == db_room.id) \
+        .order_by(models.RoomParticipant.joined_at.asc()) \
+        .all()
 
     participants_list = [
         schemas.ParticipantInfo(
