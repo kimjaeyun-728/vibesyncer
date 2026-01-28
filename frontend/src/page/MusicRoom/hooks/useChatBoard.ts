@@ -47,9 +47,8 @@ const useChatBoard = ({
     }
   }, [newMessage, isAiLoading]);
 
-  const handleSendMessage = (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmed = newTextInput.trim();
+  const trySendMessage = (textToSend: string) => {
+    const trimmed = textToSend.trim();
     if (trimmed === '') return;
 
     if (trimmed.length > MAX_MESSAGE_LENGTH) {
@@ -64,11 +63,23 @@ const useChatBoard = ({
 
     const messageData = {
       type: 'chat',
-      message: newTextInput,
+      message: trimmed,
     };
 
     sendMessage(messageData);
     setNewTextInput('');
+  };
+
+  const handleSendMessage = (e: React.FormEvent) => {
+    e.preventDefault();
+    trySendMessage(newTextInput);
+  };
+
+  const handleAiAsk = () => {
+    if (newTextInput.trim() === '') {
+      return;
+    }
+    trySendMessage(`!dj ${newTextInput}`);
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -79,6 +90,7 @@ const useChatBoard = ({
     chatContainerRef,
     newTextInput,
     handleSendMessage,
+    handleAiAsk,
     handleInputChange,
   };
 };

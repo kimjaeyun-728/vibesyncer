@@ -4,7 +4,7 @@ import useChatMessages from '@/hooks/queries/useChatMessages';
 import type { ChatMessageResponse } from '@/schemas/chatSchema';
 import type { UserData } from '@/types/user';
 import { getMessageId } from '@/utils/getMessageId';
-import { Send } from 'lucide-react';
+import { Bot, Send } from 'lucide-react';
 import useChatBoard from '../hooks/useChatBoard';
 
 interface ChatBoardProps {
@@ -30,6 +30,7 @@ const ChatBoard = ({
     chatContainerRef,
     newTextInput,
     handleSendMessage,
+    handleAiAsk,
     handleInputChange,
   } = useChatBoard({
     sendMessage,
@@ -128,9 +129,17 @@ const ChatBoard = ({
             className="flex-1 rounded-full border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-900 placeholder-gray-400 transition-all focus:border-gray-300 focus:outline-none"
           />
           <button
+            type="button"
+            onClick={handleAiAsk}
+            className="group flex items-center rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 px-4 py-3 text-white transition-all active:scale-95"
+            title="Ask AI DJ"
+          >
+            <Bot className="h-4 w-4" />
+          </button>
+          <button
             type="submit"
             aria-label="Send message"
-            className="rounded-full bg-black px-5 py-3 text-white transition-all hover:bg-gray-200"
+            className="rounded-full bg-black px-5 py-3 text-white transition-all active:scale-95"
           >
             <Send className="h-4 w-4" />
           </button>
