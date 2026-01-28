@@ -504,7 +504,10 @@ async def jump_to_song(
 ):
     """
     Jump to a specific song in the queue.
-    Logic: Mark all songs created BEFORE this target as played. Mark target as unplayed.
+    Logic:
+    1. Mark all songs created BEFORE this target as played.
+    2. Mark all songs created AFTER this target as unplayed (Reset).
+    3. Mark target as unplayed (Active).
     """
     user_id = token_data["user_id"]
     room = db.query(models.Room).filter(models.Room.room_code == room_code).first()
@@ -529,6 +532,12 @@ async def jump_to_song(
         models.QueueItem.is_played == False
     ).update({"is_played": True}, synchronize_session=False)
 
+    db.query(models.QueueItem).filter(
+        models.QueueItem.room_id == room.id,
+        models.QueueItem.created_at > target_song.created_at,
+        models.QueueItem.is_played == True
+    ).update({"is_played": False}, synchronize_session=False)
+    
     target_song.is_played = False
 
     db.commit()
