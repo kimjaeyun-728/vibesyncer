@@ -8,7 +8,6 @@ const useQueueList = (roomCode: string) => {
     queryFn: async () => {
       const rawData = await fetchQueueListAPI(roomCode);
       const validatedData = QueueArraySchema.parse(rawData);
-      console.log('Fetched queue list:', validatedData);
       return validatedData;
     },
     enabled: !!roomCode,

@@ -1,6 +1,5 @@
 import Error from '@/components/ui/Error';
 import Loading from '@/components/ui/Loading';
-import useJumpSong from '@/hooks/mutations/useJumpSong';
 import type { QueueResponse } from '@/schemas/queueSchema';
 import { useEffect, useRef } from 'react';
 
@@ -8,24 +7,20 @@ interface QueueBoardProps {
   queueList: QueueResponse[] | undefined;
   isLoading: boolean;
   isError: boolean;
-  roomCode: string;
-  isHost: boolean;
   currentSongId: number;
+  onJumpSong: (itemId: number) => void;
 }
 
 const QueueBoard = ({
   queueList,
   isLoading,
   isError,
-  roomCode,
-  isHost,
   currentSongId,
+  onJumpSong,
 }: QueueBoardProps) => {
   const queueContainerRef = useRef<HTMLDivElement>(null);
   const currentSongRef = useRef<HTMLDivElement>(null);
   const previousQueueLengthRef = useRef(0);
-
-  const { mutate: jumpSong } = useJumpSong(roomCode);
 
   useEffect(() => {
     const currentLength = queueList?.length || 0;
@@ -40,12 +35,6 @@ const QueueBoard = ({
 
     previousQueueLengthRef.current = currentLength;
   }, [queueList?.length]);
-
-  const handleJumpSong = (itemId: number) => {
-    if (isHost) {
-      jumpSong(itemId);
-    }
-  };
 
   if (isError) return <Error />;
 
@@ -79,7 +68,7 @@ const QueueBoard = ({
                   <div
                     key={song.id}
                     ref={isCurrentSong ? currentSongRef : null}
-                    onClick={() => handleJumpSong(song.id)}
+                    onClick={() => onJumpSong(song.id)}
                     className={`group cursor-pointer rounded-2xl p-4 transition-all ${
                       song.is_played
                         ? 'bg-gray-100 opacity-60'

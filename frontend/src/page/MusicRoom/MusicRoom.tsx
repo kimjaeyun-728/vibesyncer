@@ -56,6 +56,7 @@ const MusicRoom = () => {
     duration,
     handlePlayNext,
     handlePlayPrev,
+    handleJumpSong,
     handlePlay,
     handlePause,
     handleSeek,
@@ -99,9 +100,8 @@ const MusicRoom = () => {
             queueList={queueList}
             isLoading={isQueueLoading}
             isError={isQueueError}
-            roomCode={roomCode || ''}
-            isHost={user?.isHost ?? false}
             currentSongId={currentSongId}
+            onJumpSong={handleJumpSong}
           />
         </ErrorBoundary>
 

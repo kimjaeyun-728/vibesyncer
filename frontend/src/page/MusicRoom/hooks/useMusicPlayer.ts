@@ -1,3 +1,4 @@
+import useJumpSong from '@/hooks/mutations/useJumpSong';
 import usePlayNextSong from '@/hooks/mutations/usePlayNextSong';
 import usePlayPrevSong from '@/hooks/mutations/usePlayPrevSong';
 import type { ChatMessageResponse } from '@/schemas/chatSchema';
@@ -38,6 +39,7 @@ const useMusicPlayer = ({
 
   const { mutate: playNext } = usePlayNextSong(roomCode || '');
   const { mutate: playPrev } = usePlayPrevSong(roomCode || '');
+  const { mutate: jumpSong } = useJumpSong(roomCode || '');
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -107,14 +109,38 @@ const useMusicPlayer = ({
   ]);
 
   const handlePlayNext = () => {
-    if (user?.isHost) {
+    if (user?.isHost && currentSong) {
       playNext();
+      sendMessage({
+        type: 'sync',
+        action: 'play',
+        timestamp: 0,
+        videoId: currentSong.music_url,
+      });
     }
   };
 
   const handlePlayPrev = () => {
-    if (user?.isHost) {
+    if (user?.isHost && currentSong) {
       playPrev();
+      sendMessage({
+        type: 'sync',
+        action: 'play',
+        timestamp: 0,
+        videoId: currentSong.music_url,
+      });
+    }
+  };
+
+  const handleJumpSong = (itemId: number) => {
+    if (user?.isHost) {
+      jumpSong(itemId);
+      sendMessage({
+        type: 'sync',
+        action: 'play',
+        timestamp: 0,
+        videoId: currentSong.music_url,
+      });
     }
   };
 
@@ -210,6 +236,7 @@ const useMusicPlayer = ({
     duration,
     handlePlayNext,
     handlePlayPrev,
+    handleJumpSong,
     handlePlay,
     handlePause,
     handleSeek,
