@@ -276,7 +276,7 @@ async def add_to_queue(room_code: str,
 
 
 @router.patch("/{room_code}/queue/{item_id}", response_model=schemas.QueueResponse)
-def update_queue_item(
+async def update_queue_item(
         room_code: str,
         item_id: int,
         is_played: bool,
@@ -306,6 +306,11 @@ def update_queue_item(
     db.commit()
     db.refresh(db_item)
 
+    await manager.broadcast_to_room(room.id, {
+        "type": "queue_update",
+        "event": "refresh"
+    })
+            
     return db_item
 
 
