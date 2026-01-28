@@ -54,8 +54,8 @@ const MusicRoom = () => {
     isReady,
     isPlayerEnabled,
     duration,
-    handelPlayNext,
-    handelPlayPrev,
+    handlePlayNext,
+    handlePlayPrev,
     handlePlay,
     handlePause,
     handleSeek,
@@ -157,8 +157,8 @@ const MusicRoom = () => {
               handleSeek(amount);
             }}
             onSync={handleSync}
-            onPlayNext={handelPlayNext}
-            onPlayPrev={handelPlayPrev}
+            onPlayNext={handlePlayNext}
+            onPlayPrev={handlePlayPrev}
             canPlayNext={canPlayNext}
             canPlayPrev={canPlayPrev}
           />
