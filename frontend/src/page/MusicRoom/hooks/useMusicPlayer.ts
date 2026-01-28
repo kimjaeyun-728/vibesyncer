@@ -106,13 +106,13 @@ const useMusicPlayer = ({
     isPlayerEnabled,
   ]);
 
-  const handelPlayNext = () => {
+  const handlePlayNext = () => {
     if (user?.isHost) {
       playNext();
     }
   };
 
-  const handelPlayPrev = () => {
+  const handlePlayPrev = () => {
     if (user?.isHost) {
       playPrev();
     }
@@ -208,8 +208,8 @@ const useMusicPlayer = ({
     isReady,
     isPlayerEnabled,
     duration,
-    handelPlayNext,
-    handelPlayPrev,
+    handlePlayNext,
+    handlePlayPrev,
     handlePlay,
     handlePause,
     handleSeek,
