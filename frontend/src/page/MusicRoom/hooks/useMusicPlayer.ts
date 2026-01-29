@@ -139,7 +139,7 @@ const useMusicPlayer = ({
         type: 'sync',
         action: 'play',
         timestamp: 0,
-        videoId: currentSong.music_url,
+        videoId: currentSong?.music_url,
       });
     }
   };

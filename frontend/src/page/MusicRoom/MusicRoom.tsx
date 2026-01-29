@@ -89,9 +89,9 @@ const MusicRoom = () => {
     <div className="flex h-screen flex-col bg-white">
       <Header
         roomInfos={roomInfos}
-        isLoading={isLoading}
         user={user}
         roomCode={roomCode}
+        isLoading={isLoading}
       />
 
       <div className="bg-white-50 mx-auto flex w-full max-w-7xl flex-1 gap-6 overflow-hidden p-10">
