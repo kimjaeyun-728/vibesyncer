@@ -8,6 +8,7 @@ import yt_dlp
 import string
 import random
 import os
+import httpx
 from urllib.parse import urlparse, parse_qs
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -82,33 +83,29 @@ def detect_platform(url: str):
 # ---------------------------------------------------------
 # 3. Existing Utility: Spotify Scraper (Bypass DRM)
 # ---------------------------------------------------------
-def fetch_spotify_metadata(url: str):
+
+async def fetch_spotify_metadata(url: str) -> Optional[Dict[str, Any]]:
     """
-    Fetch metadata by scraping the Spotify HTML page directly.
-    This bypasses DRM errors from yt-dlp.
+    [비동기 개선] httpx를 사용하여 Spotify HTML 페이지를 비동기적으로 스크래핑합니다.
     """
-    logger.info(f"ℹ️ Scraping Spotify HTML for: {url}")
+    logger.info(f"ℹ️ [Async] Scraping Spotify HTML for: {url}")
+
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
 
     try:
-        # 1. Prepare Request with User-Agent (mimic a real browser)
-        req = urllib.request.Request(
-            url,
-            data=None,
-            headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            }
-        )
+        # 비동기 클라이언트 생성 (SSL 검증 비활성화는 기존 ctx=ssl.create_default_context()... 설정과 동일)
+        async with httpx.AsyncClient(verify=False, headers=headers) as client:
+            response = await client.get(url, timeout=5.0)
 
-        # 2. Create SSL context to ignore certificate errors
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+            if response.status_code != 200:
+                logger.warning(f"⚠️ Spotify scraping failed with status code: {response.status_code}")
+                return None
 
-        # 3. Read HTML Content
-        with urllib.request.urlopen(req, context=ctx) as response:
-            html_content = response.read().decode('utf-8')
+            html_content = response.text
 
-            # 4. Extract Metadata using Regex (Open Graph tags)
+            # 메타데이터 추출 Regex 패턴 (기존 로직 유지)
             title_match = re.search(r'<meta property="og:title" content="(.*?)"', html_content)
             title = title_match.group(1) if title_match else "Unknown Title"
 
@@ -122,9 +119,9 @@ def fetch_spotify_metadata(url: str):
                 if '·' in description:
                     artist = description.split('·')[0].strip()
                 else:
-                    artist = description  # Fallback
+                    artist = description
 
-            logger.info(f"🎉 [Spotify Scraper] Success! Title: {title} / Artist: {artist}")
+            logger.info(f"🎉 [Async Spotify Scraper] Success! Title: {title} / Artist: {artist}")
 
             return {
                 "title": title,
@@ -133,7 +130,7 @@ def fetch_spotify_metadata(url: str):
             }
 
     except Exception as e:
-        logger.error(f"💥 [Spotify Error] HTML scraping failed: {e}")
+        logger.error(f"💥 [Spotify Error] Async HTML scraping failed: {e}")
         return None
 
 
@@ -161,25 +158,26 @@ def extract_youtube_id(url: str):
 # ---------------------------------------------------------
 # [Modified] 4. General Metadata Extractor
 # ---------------------------------------------------------
-def extract_video_metadata(url: str):
-    logger.info(f"🚀 Starting Metadata Extraction for: {url}")
+async def extract_video_metadata(url: str):
+    """
+    [비동기 개선] 각 플랫폼별 메타데이터 추출 함수를 비동기적으로 분기 처리합니다.
+    """
+    logger.info(f"🚀 Starting Async Metadata Extraction for: {url}")
 
-    # STRATEGY 1: Spotify (Custom Scraper)
+    # STRATEGY 1: Spotify (Custom Scraper - Async)
     if "spotify" in url.lower():
-        return fetch_spotify_metadata(url)
+        return await fetch_spotify_metadata(url)
 
-    # STRATEGY 2: YouTube (Google Data API) - [NEW]
+    # STRATEGY 2: YouTube (Google Data API - Async)
     if "youtube.com" in url.lower() or "youtu.be" in url.lower():
-        return fetch_youtube_metadata_api(url)
+        return await fetch_youtube_metadata_api(url)
 
-    # STRATEGY 3: SoundCloud & Others (yt-dlp Fallback)
-    return fetch_metadata_with_ytdlp(url)
+    # STRATEGY 3: SoundCloud & Others (yt-dlp Fallback - 여전히 동기이므로 루프 스레드 활용)
+    return await asyncio.to_thread(fetch_metadata_with_ytdlp, url)
 
 
-def fetch_youtube_metadata_api(url: str):
-    """
-    Fetch YouTube metadata using Google Data API v3.
-    """
+async def fetch_youtube_metadata_api(url: str) -> Optional[Dict[str, Any]]:
+
     if not GOOGLE_API_KEY:
         logger.error("🚫 GOOGLE_API_KEY is missing! Cannot fetch metadata.")
         return None
@@ -189,16 +187,26 @@ def fetch_youtube_metadata_api(url: str):
         logger.warning(f"⚠️ Could not extract Video ID from: {url}")
         return None
 
+    # YouTube Data API v3의 videos 엔드포인트 URL
+    api_url = "https://www.googleapis.com/youtube/v3/videos"
+    params = {
+        "part": "snippet,contentDetails",
+        "id": video_id,
+        "key": GOOGLE_API_KEY
+    }
+
     try:
-        youtube = build('youtube', 'v3', developerKey=GOOGLE_API_KEY)
+        # httpx 비동기 클라이언트로 GET 요청 전달
+        async with httpx.AsyncClient() as client:
+            response = await client.get(api_url, params=params, timeout=5.0)
 
-        # API Call: Get video details
-        response = youtube.videos().list(
-            part="snippet,contentDetails",
-            id=video_id
-        ).execute()
+            if response.status_code != 200:
+                logger.error(f"💥 [Google API Error] HTTP Status {response.status_code}: {response.text}")
+                return None
 
-        items = response.get("items", [])
+            data = response.json()
+
+        items = data.get("items", [])
         if not items:
             logger.warning("⚠️ API returned no details for this video.")
             return None
@@ -215,7 +223,7 @@ def fetch_youtube_metadata_api(url: str):
                 thumbnails.get("default", {}).get("url")
         )
 
-        logger.info(f"🎉 [Google API] Success! Title: {title}")
+        logger.info(f"🎉 [Async Google API] Success! Title: {title}")
 
         return {
             "title": title,
@@ -224,9 +232,8 @@ def fetch_youtube_metadata_api(url: str):
         }
 
     except Exception as e:
-        logger.error(f"💥 [Google API Error] {e}")
+        logger.error(f"💥 [Google API Exception] {e}")
         return None
-
 
 def fetch_metadata_with_ytdlp(url: str):
     """
@@ -267,46 +274,51 @@ def fetch_metadata_with_ytdlp(url: str):
 # ---------------------------------------------------------
 # 5. Existing Utility: YouTube Search (For AI DJ)
 # ---------------------------------------------------------
-def search_youtube_video(query: str):
+async def search_youtube_video(query: str) -> Optional[str]:
     """
-    Search YouTube via yt-dlp and return the URL of the first result.
+    [비동기 개선] 구글 동기 라이브러리 대신 httpx를 사용하여
+    YouTube Data API v3에서 비동기로 영상을 검색하고 첫 번째 결과의 URL을 반환합니다.
     """
-
-    logger.info(f"🔍 [API Search] Searching YouTube for: {query}")
+    logger.info(f"🔍 [Async API Search] Searching YouTube for: {query}")
 
     if not GOOGLE_API_KEY:
         logger.error("🚫 GOOGLE_API_KEY is missing! Cannot search.")
         return None
 
+    # YouTube Data API v3의 search 엔드포인트 URL
+    api_url = "https://www.googleapis.com/youtube/v3/search"
+    params = {
+        "q": query,
+        "part": "id,snippet",
+        "maxResults": 1,
+        "type": "video",
+        "key": GOOGLE_API_KEY
+    }
+
     try:
-        # 1. Build the service
-        youtube = build('youtube', 'v3', developerKey=GOOGLE_API_KEY)
+        # httpx 비동기 클라이언트로 GET 요청 전달
+        async with httpx.AsyncClient() as client:
+            response = await client.get(api_url, params=params, timeout=5.0)
 
-        # 2. Call the search.list method
-        search_response = youtube.search().list(
-            q=query,
-            part='id,snippet',
-            maxResults=1,
-            type='video'
-        ).execute()
+            if response.status_code != 200:
+                logger.error(f"💥 [API Search Error] HTTP Status {response.status_code}: {response.text}")
+                return None
 
-        # 3. Extract Video ID
-        items = search_response.get('items', [])
+            data = response.json()
+
+        items = data.get('items', [])
         if not items:
-            logger.warning(f"⚠️ [API Search] No results found for: {query}")
+            logger.warning(f"⚠️ [Async API Search] No results found for: {query}")
             return None
 
         video_id = items[0]['id']['videoId']
         video_title = items[0]['snippet']['title']
 
         video_url = f"https://www.youtube.com/watch?v={video_id}"
-        logger.info(f"✅ [API Search] Found: {video_title} ({video_url})")
+        logger.info(f"✅ [Async API Search] Found: {video_title} ({video_url})")
 
         return video_url
 
-    except HttpError as e:
-        logger.error(f"💥 [API Error] Google API failed: {e}")
-        return None
     except Exception as e:
         logger.error(f"💥 [Search Error] {e}")
         return None
@@ -324,24 +336,22 @@ async def process_music_addition(
         artist: str = "Unknown Artist"
 ) -> Optional[models.QueueItem]:
     """
-    Process adding a music item to the queue.
-    Integrates detect_platform and extract_video_metadata.
+    [비동기 개선] 방에 음악 아이템을 추가하는 비즈니스 로직입니다.
+    완전 비동기화된 extract_video_metadata를 await로 직접 호출합니다.
     """
-    # 1. Detect Platform
+    # 1. 플랫폼 감지 (단순 문자열 비교이므로 동기 유지)
     detected_platform = detect_platform(music_url)
 
     if not detected_platform:
-        return None  # Return None if platform is not supported
+        return None
 
-    # 2. Extract Real Metadata (Modified for Non-blocking)
-    # If title is generic or explicitly unknown, try to scrape
+    # 2. 메타데이터 추출 비동기 호출
     TARGET_PLATFORMS = ["Youtube", "Soundcloud", "Spotify"]
 
     if detected_platform in TARGET_PLATFORMS:
         if title == "Unknown Title" or title.startswith("Shared by"):
-            loop = asyncio.get_event_loop()
-
-            metadata = await loop.run_in_executor(executor, extract_video_metadata, music_url)
+            # [개선] loop나 executor 없이 깔끔하게 await로 메타데이터를 가져옵니다.
+            metadata = await extract_video_metadata(music_url)
 
             if metadata:
                 title = metadata.get("title", title)
@@ -349,7 +359,7 @@ async def process_music_addition(
                 if not thumbnail_url:
                     thumbnail_url = metadata.get("thumbnail_url")
 
-    # 3. Save to DB
+    # 3. 데이터베이스 저장 (SQLAlchemy 동기 세션 유지)
     db_item = models.QueueItem(
         room_id=room_id,
         user_id=user_id,

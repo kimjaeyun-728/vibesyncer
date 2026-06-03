@@ -13,3 +13,4 @@ google-genai
 pyjwt
 cachetools
 google-api-python-client
+httpx

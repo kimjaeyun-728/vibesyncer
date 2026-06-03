@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from datetime import datetime
 from google import genai
 from google.genai import types
-from app.utils import search_youtube_video, executor
+from app.utils import search_youtube_video
 
 # [Fix] Configure Logger
 logger = logging.getLogger(__name__)
@@ -187,13 +187,10 @@ async def get_ai_dj_response(user_message: str, user_name: str, chat_history: li
         # 2. [Backend Logic] Find tags ([[SONG: ...]]) and replace with real links
         matches = re.findall(r"\[\[SONG: (.*?)\]\]", ai_text)
 
-        # Get the current event loop
-        loop = asyncio.get_event_loop()
-
+        # [개선] 더 이상 loop나 executor를 가져올 필요가 없습니다.
         for search_query in matches:
-            # [Fix] Run blocking yt-dlp search in a separate thread
-            # This ensures WebSocket connections don't freeze for other users
-            real_url = await loop.run_in_executor(executor, search_youtube_video, search_query)
+            # [개선] 비동기로 바뀐 search_youtube_video 함수를 직접 await로 호출합니다.
+            real_url = await search_youtube_video(search_query)
 
             if real_url:
                 replacement = f"(👉 Listen: {real_url})"
