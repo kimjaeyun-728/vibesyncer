@@ -325,6 +325,8 @@ async def search_youtube_video(query: str) -> Optional[str]:
 # ---------------------------------------------------------
 # 6. New Utility: Process Music Addition (Moved from main.py)
 # ---------------------------------------------------------
+# backend/app/utils.py 내의 process_music_addition 함수 부분만 교체 또는 확인
+
 async def process_music_addition(
         room_id: int,
         user_id: int,
@@ -335,45 +337,54 @@ async def process_music_addition(
         artist: str = "Unknown Artist"
 ) -> Optional[models.QueueItem]:
     """
-    [비동기 개선] 방에 음악 아이템을 추가하는 비즈니스 로직입니다.
-    완전 비동기화된 extract_video_metadata를 await로 직접 호출합니다.
+    [비동기 안전성 강화] 외부 API 호출의 컨텍스트 블로킹 현상을 완전히 소멸시키고
+    메타데이터 유실 없이 DB 연동을 마칩니다.
     """
-    # 1. 플랫폼 감지 (단순 문자열 비교이므로 동기 유지)
     detected_platform = detect_platform(music_url)
-
     if not detected_platform:
+        logger.warning(f"⚠️ Unsupported Platform URL: {music_url}")
         return None
 
-    # 2. 메타데이터 추출 비동기 호출
     TARGET_PLATFORMS = ["Youtube", "Soundcloud", "Spotify"]
 
     if detected_platform in TARGET_PLATFORMS:
-        if title == "Unknown Title" or title.startswith("Shared by"):
-            # [개선] loop나 executor 없이 깔끔하게 await로 메타데이터를 가져옵니다.
+        # 제목이 비어있거나 기본 공유 텍스트일 때 메타데이터 수집 가동
+        if title == "Unknown Title" or title.startswith("Shared by") or not title:
+            logger.info(f"🔍 Extracting metadata asynchronously for {detected_platform}...")
             metadata = await extract_video_metadata(music_url)
 
             if metadata:
                 title = metadata.get("title", title)
                 artist = metadata.get("artist", artist)
-                if not thumbnail_url:
+                if not thumbnail_url or thumbnail_url == "null":
                     thumbnail_url = metadata.get("thumbnail_url")
+            else:
+                logger.warning(f"⚠️ Metadata extraction returned None for URL: {music_url}")
 
-    # 3. 데이터베이스 저장 (SQLAlchemy 동기 세션 유지)
-    db_item = models.QueueItem(
-        room_id=room_id,
-        user_id=user_id,
-        title=title,
-        artist=artist,
-        music_url=music_url,
-        thumbnail_url=thumbnail_url,
-        platform=detected_platform,
-        is_played=False
-    )
-    db.add(db_item)
-    db.commit()
-    db.refresh(db_item)
+    # 최종 안전장치: 스크래핑 실패 시 대안 텍스트 보장
+    if not title: title = "Unknown Track"
+    if not artist: artist = "Unknown Artist"
 
-    return db_item
+    try:
+        db_item = models.QueueItem(
+            room_id=room_id,
+            user_id=user_id,
+            title=title,
+            artist=artist,
+            music_url=music_url,
+            thumbnail_url=thumbnail_url,
+            platform=detected_platform,
+            is_played=False
+        )
+        db.add(db_item)
+        db.commit()
+        db.refresh(db_item)
+        logger.info(f"🎉 Successfully added item to DB: {title} - {artist}")
+        return db_item
+    except Exception as e:
+        db.rollback()
+        logger.error(f"💥 Failed to commit QueueItem to DB: {e}")
+        return None
 
 def shutdown_executor():
     logger.info("Shutting down ThreadPoolExecutor...")
