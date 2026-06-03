@@ -1,6 +1,7 @@
 # backend/app/main.py
 
 import logging
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -15,6 +16,16 @@ from app.utils import shutdown_executor
 # Configure Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+gemini_key = os.environ.get("GEMINI_API_KEY")
+google_key = os.environ.get("GOOGLE_API_KEY")
+
+logger.info(f"🚨 [CRITICAL CHECK] GEMINI_API_KEY: {gemini_key[:4] if gemini_key else 'NOT_FOUND'}")
+logger.info(f"🚨 [CRITICAL CHECK] GOOGLE_API_KEY: {google_key[:4] if google_key else 'NOT_FOUND'}")
+
+if not gemini_key or not google_key:
+    logger_msg = "❌ [FATAL] 필수 환경 변수가 시스템에 존재하지 않습니다. Render 설정을 확인하세요."
+    logger.error(logger_msg)
 
 # Initialize FastAPI App
 app = FastAPI(
