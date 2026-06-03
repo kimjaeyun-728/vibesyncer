@@ -14,7 +14,7 @@ from app.utils import search_youtube_video
 # [Fix] Configure Logger
 logger = logging.getLogger(__name__)
 
-load_dotenv()
+load_dotenv(override=False)
 
 api_key = os.getenv("GEMINI_API_KEY")
 
