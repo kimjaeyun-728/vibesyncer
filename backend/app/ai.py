@@ -12,21 +12,27 @@ from app.utils import search_youtube_video
 
 logger = logging.getLogger(__name__)
 
-# Render 환경변수가 있다면 .env 파일로 오염시키지 않음
 load_dotenv(override=False)
 
-# ⚠️ 구글 genai SDK의 환경 변수 선점 버그를 우회하기 위해
-# 내부 검색 로직 가동 직전에 전용 변수를 명시적으로 시스템 풀에 격리 주입합니다.
-gemini_env_key = os.environ.get("GEMINI_API_KEY")
-
+# 전역 클라이언트는 처음에 비워둡니다 (Lazy Initialization)
 client = None
-if gemini_env_key:
-    try:
-        # 명시적 인자 전달 및 주입 체계 통일
-        client = genai.Client(api_key=gemini_env_key)
-        logger.info("✅ [VibeBot] Gemini Client successfully initialized with explicit GEMINI_API_KEY.")
-    except Exception as e:
-        logger.error(f"❌ [VibeBot] Client Initialization Failed: {e}")
+
+def get_gemini_client():
+    """구글 genai 라이브러리의 환경변수 꼬임 문제를 해결하기 위한 안전한 클라이언트 싱글톤 빌더"""
+    global client
+    if client is None:
+        gemini_key = os.environ.get("GEMINI_API_KEY")
+        if not gemini_key:
+            logger.error("❌ [VibeBot Fatal] GEMINI_API_KEY is not found in system environment.")
+            return None
+        try:
+            # 환경 변수가 확실히 준비된 시점에 명시적으로 주입하여 생성
+            client = genai.Client(api_key=gemini_key)
+            logger.info("✅ [VibeBot] Gemini Client initializing successful.")
+        except Exception as e:
+            logger.error(f"❌ [VibeBot] SDK Client Generation Failed: {e}")
+            return None
+    return client
 
 # ==========================================
 # Regex Patterns for Sanitization
@@ -69,15 +75,10 @@ async def get_ai_dj_response(user_message: str, user_name: str, chat_history: li
     if not clean_message:
         return "🤖 I didn't catch that. Could you try again?"
 
-    # ⚠️ 클라이언트가 없거나 키가 꼬였을 경우 재검증하여 가동성 확보
-    global client
-    if not client:
-        active_key = os.environ.get("GEMINI_API_KEY")
-        if active_key:
-            client = genai.Client(api_key=active_key)
-        else:
-            logger.error("❌ GEMINI_API_KEY is completely missing in runtime environment.")
-            return "🤖 DJ Unavailable (API Key Missing)"
+    # ⚠️ 핵심: 실시간으로 준비된 안전한 클라이언트를 호출합니다.
+    ai_client = get_gemini_client()
+    if not ai_client:
+        return "🤖 DJ Unavailable (API Key Missing)"
 
     now = datetime.now().strftime("%Y-%m-%d")
     history_text = ""
@@ -126,8 +127,8 @@ async def get_ai_dj_response(user_message: str, user_name: str, chat_history: li
         VibeBot:
         """
 
-        # 비동기 호출 실행
-        response = await client.aio.models.generate_content(
+        # 안전하게 싱글톤 인스턴스로 비동기 쿼리 전송
+        response = await ai_client.aio.models.generate_content(
             model='gemini-2.0-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
@@ -144,14 +145,11 @@ async def get_ai_dj_response(user_message: str, user_name: str, chat_history: li
 
         matches = re.findall(r"\[\[SONG: (.*?)\]\]", ai_text)
         for search_query in matches:
-            # 완전히 비동기화된 유틸리티 검색 함수를 직접 await로 당겨옵니다.
             real_url = await search_youtube_video(search_query)
-
             if real_url:
                 replacement = f"(👉 Listen: {real_url})"
             else:
                 replacement = f"(👉 Search: https://www.youtube.com/results?search_query={search_query.replace(' ', '+')})"
-
             ai_text = ai_text.replace(f"[[SONG: {search_query}]]", replacement)
 
         return ai_text
@@ -161,13 +159,13 @@ async def get_ai_dj_response(user_message: str, user_name: str, chat_history: li
         return "🤖 Sorry, I'm having trouble right now. Please try again later."
 
 async def get_ai_welcome_message(username: str) -> str:
-    global client
-    if not client:
+    ai_client = get_gemini_client()
+    if not ai_client:
         return f"Hello {username}! Welcome to our music trip! 🎧"
 
     prompt = f"A new user named '{username}' just joined the room. Generate a short, fun, welcoming message in English (1 sentence, friendly, with emojis)."
     try:
-        response = await client.aio.models.generate_content(
+        response = await ai_client.aio.models.generate_content(
             model='gemini-2.0-flash',
             contents=prompt,
             config=types.GenerateContentConfig(temperature=0.8, max_output_tokens=100)

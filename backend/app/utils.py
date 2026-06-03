@@ -133,22 +133,26 @@ async def fetch_spotify_metadata(url: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def extract_youtube_id(url: str):
-    """
-    Extracts the video ID from various YouTube URL formats.
-    Supports: youtube.com/watch?v=ID, youtu.be/ID, shorts/ID
-    """
-    # 1. Short URL (youtu.be/ID)
-    if "youtu.be" in url:
-        path = urlparse(url).path
-        return path[1:] if path else None
+# backend/app/utils.py 내의 extract_youtube_id 함수 수정
 
-    # 2. Standard URL (youtube.com/watch?v=ID)
-    if "youtube.com" in url:
-        query = urlparse(url).query
-        params = parse_qs(query)
-        return params.get("v", [None])[0]
+def extract_youtube_id(url: str) -> Optional[str]:
+    """
+    [Regex 고도화] 다양한 유튜브 URL 규격에서 11자리 비디오 ID를 정확히 추출합니다.
+    Supports: youtube.com/watch?v=ID, youtu.be/ID, youtube.com/shorts/ID, /live/ID 등 모든 파라미터 우회
+    """
+    if not url:
+        return None
 
+    # 유튜브 ID 추출용 통합 정규식 패턴
+    pattern = r'(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|\S+\?v=|(?:shorts|live|embed)\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})'
+
+    match = re.search(pattern, url)
+    if match:
+        video_id = match.group(1)
+        logger.info(f"🎯 [YouTube Parser] Successfully extracted Video ID: {video_id}")
+        return video_id
+
+    logger.warning(f"⚠️ [YouTube Parser] Failed to extract Video ID from URL: {url}")
     return None
 
 # ---------------------------------------------------------
