@@ -15,7 +15,7 @@ from app.utils import search_youtube_video
 logger = logging.getLogger(__name__)
 
 
-api_key = os.getenv("GEMINI_API_KEY")
+api_key = os.environ.get("GEMINI_API_KEY")
 
 client = None
 if api_key:
