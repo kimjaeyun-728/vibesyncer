@@ -42,12 +42,15 @@ class ConnectionManager:
 
     async def broadcast_to_room(self, room_id: int, message: dict):
         if room_id in self.active_connections:
-            for connection in self.active_connections[room_id]:
+            # Sending can fail when a peer disappears without completing the
+            # WebSocket close handshake. Iterate over a copy so those stale
+            # connections can be removed safely.
+            for connection in self.active_connections[room_id][:]:
                 try:
                     await connection.send_json(message)
                 except Exception as e:
                     logger.error(f"Failed to send message: {e}")
-                    pass
+                    self.disconnect(connection, room_id)
     def update_room_state(self, room_id: int, state: dict):
         self.room_states[room_id] = state
 

@@ -3,6 +3,7 @@
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import tuple_
 from app import database
 from app.models import models
 from app.schemas import schemas
@@ -101,7 +102,7 @@ def join_room(join_data: schemas.RoomJoin, db: Session = Depends(database.get_db
         .filter(models.User.username == join_data.nickname) \
         .first()
 
-    if duplicate_user:
+    if duplicate_user or db_room.host_nickname == join_data.nickname:
         raise HTTPException(status_code=409, detail="Nickname already exists in this room.")
 
     db_user = models.User(username=join_data.nickname)
@@ -198,6 +199,10 @@ async def delete_room(room_code: str, token_data: dict = Depends(verify_token), 
     guest_user_ids = [p[0] for p in participant_rows]
 
     db.delete(db_room)
+    # Flush room/participant deletes before bulk-deleting users whose foreign
+    # keys also cascade to participants. Otherwise ORM updates can hit rows
+    # that the database has already removed.
+    db.flush()
     if guest_user_ids:
         db.query(models.User).filter(models.User.id.in_(guest_user_ids)).delete(synchronize_session=False)
 
@@ -225,7 +230,7 @@ def get_room_queue(room_code: str, db: Session = Depends(database.get_db)):
         raise HTTPException(status_code=404, detail="Room not found")
     return db.query(models.QueueItem).filter(
         models.QueueItem.room_id == room.id
-    ).order_by(models.QueueItem.created_at.asc()).all()
+    ).order_by(models.QueueItem.created_at.asc(), models.QueueItem.id.asc()).all()
 
 
 @router.post("/{room_code}/queue", response_model=schemas.QueueResponse)
@@ -407,7 +412,7 @@ async def play_next_song(
     unplayed_query = db.query(models.QueueItem).filter(
         models.QueueItem.room_id == room.id,
         models.QueueItem.is_played == False
-    ).order_by(models.QueueItem.created_at.asc())
+    ).order_by(models.QueueItem.created_at.asc(), models.QueueItem.id.asc())
 
     unplayed_songs = unplayed_query.all()
 
@@ -469,7 +474,7 @@ async def play_prev_song(
     last_played_song = db.query(models.QueueItem).filter(
         models.QueueItem.room_id == room.id,
         models.QueueItem.is_played == True
-    ).order_by(models.QueueItem.created_at.desc()).first()
+    ).order_by(models.QueueItem.created_at.desc(), models.QueueItem.id.desc()).first()
 
     if not last_played_song:
         raise HTTPException(status_code=400, detail="No previous songs found.")
@@ -528,13 +533,15 @@ async def jump_to_song(
 
     db.query(models.QueueItem).filter(
         models.QueueItem.room_id == room.id,
-        models.QueueItem.created_at < target_song.created_at,
+        tuple_(models.QueueItem.created_at, models.QueueItem.id) <
+        (target_song.created_at, target_song.id),
         models.QueueItem.is_played == False
     ).update({"is_played": True}, synchronize_session=False)
 
     db.query(models.QueueItem).filter(
         models.QueueItem.room_id == room.id,
-        models.QueueItem.created_at > target_song.created_at,
+        tuple_(models.QueueItem.created_at, models.QueueItem.id) >
+        (target_song.created_at, target_song.id),
         models.QueueItem.is_played == True
     ).update({"is_played": False}, synchronize_session=False)
     

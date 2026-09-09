@@ -30,7 +30,7 @@ class Room(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     host = relationship("User", back_populates="rooms")
-    participants = relationship("RoomParticipant", back_populates="room")
+    participants = relationship("RoomParticipant", back_populates="room", cascade="all, delete-orphan")
 
     @property
     def host_nickname(self):
