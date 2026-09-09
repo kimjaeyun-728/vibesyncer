@@ -5,15 +5,9 @@ import re
 import logging
 import jwt
 from datetime import datetime, timedelta
-from collections import defaultdict
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
-from typing import List
-
 from cachetools import TTLCache
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import desc
-from sqlalchemy.orm import Session
 
 # Import dependencies
 from app import database
@@ -63,12 +57,16 @@ async def websocket_endpoint(websocket: WebSocket, room_code: str):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id = payload.get("user_id")
+        token_room_id = payload.get("room_id")
 
-        if user_id is None:
+        if user_id is None or token_room_id is None:
             await websocket.close(code=4003, reason="Invalid Token")
             return
 
-    except jwt.PyJWTError:
+        user_id = int(user_id)
+        token_room_id = int(token_room_id)
+
+    except (jwt.PyJWTError, TypeError, ValueError):
         await websocket.close(code=4003, reason="Token Verification Failed")
         return
 
@@ -78,6 +76,7 @@ async def websocket_endpoint(websocket: WebSocket, room_code: str):
 # WebSocket does not support Dependency Injection nicely, so we use SessionLocal manually
 
     db = database.SessionLocal()
+    room_id = None
 
     try:
         # Find room by code
@@ -87,6 +86,13 @@ async def websocket_endpoint(websocket: WebSocket, room_code: str):
             await websocket.close(code=4004, reason="Invalid Room Code")
             return
 
+        # A token is issued for exactly one room. Without this check, a user
+        # who has joined any room could use that token to read and write chat
+        # messages in another room by changing the WebSocket URL.
+        if token_room_id != room.id:
+            await websocket.close(code=4003, reason="Token is not valid for this room")
+            return
+
         # Extract ID for internal logic
         room_id = room.id
         host_id = room.host_id  # For permission check
@@ -94,11 +100,16 @@ async def websocket_endpoint(websocket: WebSocket, room_code: str):
         # -----------------------------------------------------
         # 🔗 3. Connection & Broadcast
         # -----------------------------------------------------
-        await manager.connect(websocket, room_id)
-
         # 4. Fetch User Info
         user = db.query(models.User).filter(models.User.id == user_id).first()
-        username = user.username if user else f"Unknown({user_id})"
+        participant = db.query(models.RoomParticipant).filter_by(
+            room_id=room_id, user_id=user_id
+        ).first()
+        if not user or (user_id != host_id and not participant):
+            await websocket.close(code=4003, reason="User is not a room member")
+            return
+        username = user.username
+        await manager.connect(websocket, room_id)
 
         # 5. Broadcast Join
         await manager.broadcast_to_room(room_id, {
@@ -128,6 +139,7 @@ async def websocket_endpoint(websocket: WebSocket, room_code: str):
             logger.info(f"AI Welcome message sent to {username} in room {room_id}")
 
         except Exception as e:
+            db.rollback()
             logger.error(f"Failed to send AI welcome message: {e}")
             pass
         # ==========================================================
@@ -145,6 +157,10 @@ async def websocket_endpoint(websocket: WebSocket, room_code: str):
                 except json.JSONDecodeError:
                     # If not JSON, treat as legacy text chat
                     payload = {"type": "chat", "message": raw_data}
+
+                if not isinstance(payload, dict):
+                    await websocket.send_json({"type": "error", "message": "Expected a JSON object"})
+                    continue
 
                 message_type = payload.get("type", "chat")
 
@@ -166,7 +182,7 @@ async def websocket_endpoint(websocket: WebSocket, room_code: str):
                 # [ADD] 3. Late Join Sync Request Handling
                 # ==========================================================
                 if message_type == "request_sync":
-                    current_state = manager.room_state.get(room_id)
+                    current_state = manager.room_states.get(room_id)
 
                     if current_state:
                         await websocket.send_json(current_state)
@@ -176,7 +192,7 @@ async def websocket_endpoint(websocket: WebSocket, room_code: str):
                 chat_message = payload.get("message", "")
 
                 # Skip empty messages
-                if not chat_message:
+                if not isinstance(chat_message, str) or not chat_message.strip():
                     continue
 
                 # Save Chat
@@ -288,7 +304,12 @@ async def websocket_endpoint(websocket: WebSocket, room_code: str):
 
         except WebSocketDisconnect:
             manager.disconnect(websocket, room_id)
+        except Exception:
+            logger.exception("Unhandled WebSocket error in room %s", room_id)
+            await websocket.close(code=1011)
 
     finally:
+        if room_id is not None:
+            manager.disconnect(websocket, room_id)
         # Always close the manual session
         db.close()
